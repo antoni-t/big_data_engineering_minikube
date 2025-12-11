@@ -1,0 +1,5 @@
+kafka-python
+pandas
+openmeteo-requests
+requests-cache
+retry-requests

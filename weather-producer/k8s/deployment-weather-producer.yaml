@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: weather-producer
+  namespace: default   # oder eigener Namespace, z.B. data-pipeline
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: weather-producer
+  template:
+    metadata:
+      labels:
+        app: weather-producer
+    spec:
+      containers:
+        - name: weather-producer
+          image: weather-producer:latest
+          imagePullPolicy: Never   # wichtig: nutze lokales Minikube-Image
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "my-cluster-kafka-bootstrap.kafka.svc:9092"
+            - name: KAFKA_TOPIC
+              value: "weather-raw"
+            - name: GRID_PATH
+              value: "/app/de_grid_cell_centers.csv"
+            - name: POLL_INTERVAL_SECONDS
+              value: "3600"
+          # Optional: Ressourcenlimits
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"

@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jupyter-consumer
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jupyter-consumer
+  template:
+    metadata:
+      labels:
+        app: jupyter-consumer
+    spec:
+      containers:
+        - name: jupyter-consumer
+          image: jupyter-consumer:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8888
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "my-cluster-kafka-bootstrap.kafka.svc:9092"
+            - name: KAFKA_TOPIC_INPUT
+              value: "weather-raw"
+            - name: MODEL_PATH
+              value: "/models/rf_model.pkl"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jupyter-consumer
+  namespace: default
+spec:
+  type: NodePort
+  selector:
+    app: jupyter-consumer
+  ports:
+    - port: 8888
+      targetPort: 8888
+      nodePort: 30088
