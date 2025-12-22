@@ -1,7 +1,3 @@
-# Datei erstellen und Text hineinschreiben
-print('worked_python skript weather_kafka_producer.py')   
- 
-'''
 #!/usr/bin/env python3
 import json
 import os
@@ -215,5 +211,3 @@ while True:
     # Konfigurierbare Pause, dann neuen Forecast ziehen
     print(f"Sleeping for {POLL_INTERVAL_SECONDS} seconds before next batch...")
     time.sleep(POLL_INTERVAL_SECONDS)
-
-    '''

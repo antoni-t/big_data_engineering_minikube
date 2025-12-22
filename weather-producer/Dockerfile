@@ -1,5 +1,5 @@
 # --- Basisimage ---
-FROM python:3.10-slim
+FROM python:3.11
 
 # --- Arbeitsverzeichnis ---
 WORKDIR /app
@@ -10,12 +10,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # --- Python-Abhängigkeiten installieren ---
-# Falls du eine requirements.txt hast, sonst entfernen:
-# COPY requirements.txt .
-# RUN pip install --no-cache-dir -r requirements.txt
-
-# OPTIONAL: Beispielabhängigkeiten für Kafka
-RUN pip install --no-cache-dir kafka-python requests
+COPY requirements.txt .  
+RUN pip install --no-cache-dir -r requirements.txt
 
 # --- Dein Python-Skript in das Image kopieren ---
 COPY weather_kafka_producer.py .

@@ -7,9 +7,11 @@ set -euo pipefail
 # - Stellt sicher, dass Minikube läuft
 # - Schaltet sinnvolle Addons frei (metrics-server, ingress)
 # - Installiert Strimzi + Kafka (my-cluster)
-# - Baut und deployed den Weather Producer
-# - Installiert ArgoCD und registriert eine Root-Application,
-#   die auf https://github.com/antoni-t/big_data_engineering_minikube zeigt
+# - Baut und deployed den Weather Producer (Deployment)
+# - Baut ein Scraper-Image und legt zwei CronJobs an:
+#     * autobahn-scraper (alle 30 Minuten)
+#     * wetter-scraper   (jede Stunde)
+# - Installiert ArgoCD und registriert eine Root-Application
 ######################################################################
 
 # Konfiguration (bei Bedarf anpassen)
@@ -22,9 +24,10 @@ ARGO_APP_DEST_SERVER="https://kubernetes.default.svc"
 # Pfad im Git-Repo, in dem deine ArgoCD-App-Definitionen liegen (z.B. App-of-Apps)
 ARGO_APP_PATH="${ARGO_APP_PATH:-argocd/apps}"
 
-# Basisverzeichnisse
+# Basisverzeichnis (Repo-Root)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PRODUCER_DIR="${SCRIPT_DIR}/weather-producer"
+SCRAPER_DIR="${SCRIPT_DIR}/scraper"
 
 echo "=== Big Data Engineering Bootstrap startet ==="
 
@@ -59,7 +62,7 @@ echo "Setze Docker-Umgebung auf Minikube…"
 eval "$(minikube docker-env)"
 
 ######################################################################
-# 1 b) Sinnvolle Addons aktivieren (metrics-server, ingress)
+# 1b) Sinnvolle Addons aktivieren (metrics-server, ingress)
 ######################################################################
 echo "Aktiviere Minikube-Addons (metrics-server, ingress)…"
 
@@ -101,9 +104,9 @@ echo "Warte, bis Strimzi-Operator bereit ist…"
 kubectl rollout status deployment/strimzi-cluster-operator -n kafka --timeout=300s
 
 ######################################################################
-# 2b. Kafka Single-Node Cluster deployen (my-cluster, KRaft)
+# 2b. Kafka Single-Node Cluster deployen (my-cluster)
 ######################################################################
-echo "Erzeuge/aktualisiere Kafka-Cluster 'my-cluster' (Single-Node, KRaft)…"
+echo "Erzeuge/aktualisiere Kafka-Cluster 'my-cluster' (Single-Node)…"
 
 kubectl apply -f "https://strimzi.io/examples/latest/kafka/kafka-ephemeral.yaml" -n kafka
 
@@ -193,7 +196,7 @@ spec:
             - name: KAFKA_TOPIC
               value: "weather-raw"
             - name: GRID_PATH
-              value: "/app/de_grid_cell_centers.csv"
+              value: "de_grid_cell_centers.csv"
             - name: POLL_INTERVAL_SECONDS
               value: "3600"
           resources:
@@ -208,7 +211,94 @@ EOF
 echo "Deployment 'weather-producer' wurde angewendet."
 
 ######################################################################
-# 5. ArgoCD installieren (falls nicht vorhanden)
+# 5. Scraper-Image bauen (autobahn + wetter)
+######################################################################
+echo "Baue lokales Docker-Image 'scraper:latest' ..."
+
+if [ ! -d "${SCRAPER_DIR}" ]; then
+  echo "FEHLER: Verzeichnis ${SCRAPER_DIR} existiert nicht. Bitte prüfe deine Projektstruktur."
+  exit 1
+fi
+
+cd "${SCRAPER_DIR}"
+
+if [ ! -f "Dockerfile" ]; then
+  echo "FEHLER: Dockerfile im Verzeichnis ${SCRAPER_DIR} nicht gefunden!"
+  exit 1
+fi
+
+docker build -t scraper:latest .
+
+echo "Docker-Image 'scraper:latest' wurde erfolgreich gebaut."
+cd "${SCRIPT_DIR}"
+
+######################################################################
+# 6. CronJobs für Autobahn- und Wetter-Scraper anlegen
+######################################################################
+echo "Erzeuge/aktualisiere CronJob 'autobahn-scraper' (alle 30 Minuten) ..."
+cat <<EOF | kubectl apply -f -
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: autobahn-scraper
+  namespace: default
+spec:
+  schedule: "*/30 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: autobahn-scraper
+              image: scraper:latest
+              imagePullPolicy: Never
+              env:
+                - name: SCRAPER_DATA_DIR
+                  value: "/data"
+              command: ["python", "autobahn_scraper.py"]
+              volumeMounts:
+                - name: scraper-data
+                  mountPath: /data
+          volumes:
+            - name: scraper-data
+              emptyDir: {}
+EOF
+
+echo "Erzeuge/aktualisiere CronJob 'wetter-scraper' (stündlich) ..."
+cat <<EOF | kubectl apply -f -
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: wetter-scraper
+  namespace: default
+spec:
+  schedule: "0 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: wetter-scraper
+              image: scraper:latest
+              imagePullPolicy: Never
+              env:
+                - name: SCRAPER_DATA_DIR
+                  value: "/data"
+              command: ["python", "wetter_scraper.py"]
+              volumeMounts:
+                - name: scraper-data
+                  mountPath: /data
+          volumes:
+            - name: scraper-data
+              emptyDir: {}
+EOF
+
+echo "CronJobs 'autobahn-scraper' und 'wetter-scraper' wurden angewendet."
+
+######################################################################
+# 7. ArgoCD installieren (falls nicht vorhanden)
 ######################################################################
 echo "Prüfe ArgoCD-Installation…"
 
@@ -227,7 +317,7 @@ else
 fi
 
 ######################################################################
-# 6. ArgoCD Root-Application anlegen (GitOps-Einstiegspunkt)
+# 8. ArgoCD Root-Application anlegen (GitOps-Einstiegspunkt)
 ######################################################################
 echo "Erzeuge/aktualisiere ArgoCD Application '${ARGO_APP_NAME}'…"
 
@@ -260,7 +350,7 @@ echo "ArgoCD Application '${ARGO_APP_NAME}' wurde angewendet."
 echo "Stelle sicher, dass im Git-Repo unter Pfad '${ARGO_APP_PATH}' passende ArgoCD-Manifeste (z.B. App-of-Apps) liegen."
 
 ######################################################################
-# 7. Optional: Port-Forward für ArgoCD-UI
+# 9. Optional: Port-Forward für ArgoCD-UI
 ######################################################################
 echo "Richte optionales Port-Forward für ArgoCD-Weboberfläche ein…"
 
@@ -286,6 +376,9 @@ echo "  Benutzername: admin"
 echo "  Passwort:     kubectl -n argocd get secret argocd-initial-admin-secret \\"
 echo "                 -o jsonpath='{.data.password}' | base64 -d && echo"
 echo
-echo "Die eigentlichen Deployments (Kafka/Strimzi, Jupyter, HDFS, Iceberg, etc.)"
-echo "werden jetzt durch ArgoCD aus dem Git-Repo ${GIT_REPO_URL} synchronisiert."
+echo "Deployments:"
+echo "  - Kafka/Strimzi im Namespace 'kafka'"
+echo "  - Weather Producer (Deployment) im Namespace 'default'"
+echo "  - CronJobs 'autobahn-scraper' & 'wetter-scraper' im Namespace 'default'"
+echo "  - ArgoCD im Namespace '${ARGO_APP_NAMESPACE}'"
 echo "=================================================================="

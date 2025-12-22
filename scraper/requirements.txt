@@ -1,0 +1,9 @@
+requests
+pytz
+python-dateutil
+numpy
+pandas
+kafka-python
+openmeteo-requests
+requests-cache
+retry-requests
