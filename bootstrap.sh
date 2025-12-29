@@ -28,6 +28,7 @@ ARGO_APP_PATH="${ARGO_APP_PATH:-argocd/apps}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PRODUCER_DIR="${SCRIPT_DIR}/weather-producer"
 SCRAPER_DIR="${SCRIPT_DIR}/scraper"
+MACHINE_LEARNING_DIR="${SCRIPT_DIR}/machine_learning_model"
 
 echo "=== Big Data Engineering Bootstrap startet ==="
 
@@ -233,7 +234,40 @@ echo "Docker-Image 'scraper:latest' wurde erfolgreich gebaut."
 cd "${SCRIPT_DIR}"
 
 ######################################################################
-# 6. CronJobs für Autobahn- und Wetter-Scraper anlegen
+# 6. Docker-Image für Machine Learning Model (Jupyter) bauen
+######################################################################
+echo "Baue lokales Docker-Image 'machine-learning-model:latest' ..."
+
+if [ ! -d "${MACHINE_LEARNING_DIR}" ]; then
+  echo "FEHLER: Verzeichnis ${MACHINE_LEARNING_DIR} existiert nicht."
+  exit 1
+fi
+
+cd "${MACHINE_LEARNING_DIR}"
+
+if [ ! -f "Dockerfile" ]; then
+  echo "FEHLER: Dockerfile im Verzeichnis ${MACHINE_LEARNING_DIR} nicht gefunden!"
+  exit 1
+fi
+
+docker build -t machine-learning-model:latest .
+
+echo "Docker-Image 'machine-learning-model:latest' wurde erfolgreich gebaut."
+cd "${SCRIPT_DIR}"
+
+######################################################################
+# 7. Machine Learning Model (Jupyter) deployen
+######################################################################
+echo "Deploye Machine Learning Model (PVC + Deployment + Service)..."
+
+kubectl apply -f "${MACHINE_LEARNING_DIR}/k8s/mlflow-pvc.yaml"
+kubectl apply -f "${MACHINE_LEARNING_DIR}/k8s/machine-learning-deployment.yaml"
+kubectl apply -f "${MACHINE_LEARNING_DIR}/k8s/machine-learning-service.yaml"
+
+echo "Machine Learning Model wurde deployed (NodePort 30089)."
+
+######################################################################
+# 8. CronJobs für Autobahn- und Wetter-Scraper anlegen
 ######################################################################
 echo "Erzeuge/aktualisiere CronJob 'autobahn-scraper' (alle 30 Minuten) ..."
 cat <<EOF | kubectl apply -f -
@@ -298,7 +332,7 @@ EOF
 echo "CronJobs 'autobahn-scraper' und 'wetter-scraper' wurden angewendet."
 
 ######################################################################
-# 7. ArgoCD installieren (falls nicht vorhanden)
+# 9. ArgoCD installieren (falls nicht vorhanden)
 ######################################################################
 echo "Prüfe ArgoCD-Installation…"
 
@@ -317,7 +351,7 @@ else
 fi
 
 ######################################################################
-# 8. ArgoCD Root-Application anlegen (GitOps-Einstiegspunkt)
+# 10. ArgoCD Root-Application anlegen (GitOps-Einstiegspunkt)
 ######################################################################
 echo "Erzeuge/aktualisiere ArgoCD Application '${ARGO_APP_NAME}'…"
 
@@ -350,7 +384,7 @@ echo "ArgoCD Application '${ARGO_APP_NAME}' wurde angewendet."
 echo "Stelle sicher, dass im Git-Repo unter Pfad '${ARGO_APP_PATH}' passende ArgoCD-Manifeste (z.B. App-of-Apps) liegen."
 
 ######################################################################
-# 9. Optional: Port-Forward für ArgoCD-UI
+# 11. Optional: Port-Forward für ArgoCD-UI
 ######################################################################
 echo "Richte optionales Port-Forward für ArgoCD-Weboberfläche ein…"
 

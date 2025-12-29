@@ -147,10 +147,12 @@ while True:
         f"(today_local={today_local_date})..."
     )
 
-    for _, row in grid.iterrows():
-        cell_id = row["id"]  # z. B. "pt_0_0"
-        lat = float(row["lat"])
-        lon = float(row["lon"])
+    for _, row_idx in grid.iterrows():
+        cell_id = row_idx["id"]  # z. B. "pt_0_0"
+        row = int(row_idx["row"])
+        col = int(row_idx["col"])
+        lat = float(row_idx["lat"])
+        lon = float(row_idx["lon"])
 
         try:
             (
@@ -186,7 +188,9 @@ while True:
                 message = {
                     "ts_produced_utc": batch_ts_str,                    # Zeitpunkt des Sends (UTC)
                     "slot": slot_key,                                   # D1Hxx
-                    "cell_id": cell_id,                                 # aus CSV (pt_0_0, pt_0_1, ...)
+                    "cell_id": cell_id,                                 # aus CSV (pt_0_0, pt_0_1, ...) 
+                    "row": row,
+                    "col": col,
                     "latitude": resp_lat,
                     "longitude": resp_lon,
                     "timestamp_hour_local": ts_hour_local.isoformat(),  # lokaler Timestamp

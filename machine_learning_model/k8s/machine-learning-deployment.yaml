@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: machine-learning-model
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: machine-learning-model
+  template:
+    metadata:
+      labels:
+        app: machine-learning-model
+    spec:
+      containers:
+        - name: machine-learning-model
+          image: machine-learning-model:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8888
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "my-cluster-kafka-bootstrap.kafka.svc:9092"
+            - name: KAFKA_TOPIC
+              value: "weather-raw"
+
+            # MLflow – nutzt File-Store im Volume
+            - name: MLFLOW_TRACKING_URI
+              value: "file:/mlruns"
+
+          volumeMounts:
+            - name: mlflow-artifacts
+              mountPath: /mlruns
+      volumes:
+        - name: mlflow-artifacts
+          persistentVolumeClaim:
+            claimName: mlflow-artifacts-pvc
