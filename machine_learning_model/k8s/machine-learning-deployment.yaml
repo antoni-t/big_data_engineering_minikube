@@ -19,19 +19,31 @@ spec:
           imagePullPolicy: Never
           ports:
             - containerPort: 8888
+
+          # Jupyter explizit starten + allow-root setzen
+          command: ["jupyter", "lab"]
+          args:
+            - "--ip=0.0.0.0"
+            - "--port=8888"
+            - "--no-browser"
+            - "--allow-root"
+            - "--NotebookApp.token="
+            - "--NotebookApp.password="
+            - "--ServerApp.token="
+            - "--ServerApp.password="
+
           env:
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: "my-cluster-kafka-bootstrap.kafka.svc:9092"
             - name: KAFKA_TOPIC
               value: "weather-raw"
-
-            # MLflow – nutzt File-Store im Volume
             - name: MLFLOW_TRACKING_URI
               value: "file:/mlruns"
 
           volumeMounts:
             - name: mlflow-artifacts
               mountPath: /mlruns
+
       volumes:
         - name: mlflow-artifacts
           persistentVolumeClaim:
