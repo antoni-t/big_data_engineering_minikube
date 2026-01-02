@@ -332,6 +332,25 @@ EOF
 echo "CronJobs 'autobahn-scraper' und 'wetter-scraper' wurden angewendet."
 
 ######################################################################
+# 8b. Sofortige Initial-Ausführung (Kickoff Jobs)
+######################################################################
+echo "Starte beide Scraper sofort einmalig (Kickoff Jobs)..."
+
+TS="$(date +%Y%m%d%H%M%S)"
+
+AUTO_JOB="autobahn-scraper-bootstrap-${TS}"
+WETTER_JOB="wetter-scraper-bootstrap-${TS}"
+
+# Jobs nur erstellen, wenn es sie noch nicht gibt (idempotent)
+kubectl get job "${AUTO_JOB}" -n default >/dev/null 2>&1 || \
+  kubectl create job --from=cronjob/autobahn-scraper "${AUTO_JOB}" -n default
+
+kubectl get job "${WETTER_JOB}" -n default >/dev/null 2>&1 || \
+  kubectl create job --from=cronjob/wetter-scraper "${WETTER_JOB}" -n default
+
+echo "Kickoff Jobs erstellt: ${AUTO_JOB}, ${WETTER_JOB}"
+
+######################################################################
 # 9. ArgoCD installieren (falls nicht vorhanden)
 ######################################################################
 echo "Prüfe ArgoCD-Installation…"
