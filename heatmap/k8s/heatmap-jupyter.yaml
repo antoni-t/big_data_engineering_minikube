@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: heatmap
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: heatmap
+  template:
+    metadata:
+      labels:
+        app: heatmap
+    spec:
+      containers:
+        - name: heatmap
+          image: heatmap:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8888
+          command: ["jupyter", "lab"]
+          args:
+            - "--ip=0.0.0.0"
+            - "--port=8888"
+            - "--no-browser"
+            - "--allow-root"
+            - "--ServerApp.token="
+            - "--ServerApp.password="
+            - "--LabApp.extension_manager=readonly"
+            - "--notebook-dir=/app/notebooks"
+          env:
+            - name: MARIADB_URL
+              value: "mysql+pymysql://root:root@mariadb.default.svc.cluster.local:3306/predictions"
+
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8888
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8888
+            initialDelaySeconds: 30
+            periodSeconds: 10

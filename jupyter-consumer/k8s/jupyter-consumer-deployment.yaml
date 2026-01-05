@@ -13,24 +13,6 @@ spec:
       labels:
         app: jupyter-consumer
     spec:
-      initContainers:
-        - name: wait-for-runid
-          image: busybox:1.36
-          command:
-            - sh
-            - -c
-            - |
-              echo "Waiting for /mlruns/LATEST_RUN_ID ..."
-              while [ ! -f /mlruns/LATEST_RUN_ID ]; do
-                sleep 2
-              done
-              echo "Found RUN_ID:"
-              cat /mlruns/LATEST_RUN_ID
-
-          volumeMounts:
-            - name: mlflow-artifacts
-              mountPath: /mlruns
-
       containers:
         - name: jupyter-consumer
           image: jupyter-consumer:latest
@@ -49,6 +31,8 @@ spec:
             - name: RUN_ID_FILE
               value: "/mlruns/LATEST_RUN_ID"
 
+            # MariaDB im Heatmap-Pod (Service folgt später)
+            # Beispiel-URL (passen wir an sobald heatmap/mariadb existiert):
             - name: MARIADB_URL
               value: "mysql+pymysql://root:root@mariadb.default.svc.cluster.local:3306/predictions"
 
@@ -59,11 +43,11 @@ spec:
 
           resources:
             requests:
-              cpu: "50m"
-              memory: "256Mi"
+              cpu: "200m"
+              memory: "2Gi"
             limits:
-              cpu: "500m"
-              memory: "512Mi"
+              cpu: "1000m"
+              memory: "3Gi"
 
           volumeMounts:
             - name: mlflow-artifacts

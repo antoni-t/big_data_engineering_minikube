@@ -30,8 +30,16 @@ PRODUCER_DIR="${SCRIPT_DIR}/weather-producer"
 SCRAPER_DIR="${SCRIPT_DIR}/scraper"
 MACHINE_LEARNING_DIR="${SCRIPT_DIR}/machine_learning_model"
 
-echo "=== Big Data Engineering Bootstrap startet ==="
+# Lokale Trainingsdaten (Windows) -> in Minikube mounten
+AUTOBAHN_LOCAL_DIR="${AUTOBAHN_LOCAL_DIR:-C:/Users/thoma/DHBW_master_semester_3/big_data_engineering/Gruppen-Projekt/ML_training_final/Alle-Autobahn-Daten/autobahn}"
+WEATHER_LOCAL_DIR="${WEATHER_LOCAL_DIR:-C:/Users/thoma/DHBW_master_semester_3/big_data_engineering/Gruppen-Projekt/ML_training_final/weather_data}"
 
+# Zielpfade in Minikube VM
+AUTOBAHN_MK_DIR="/mnt/autobahn_data"
+WEATHER_MK_DIR="/mnt/weather_hist"
+
+
+echo "=== Big Data Engineering Bootstrap startet ==="
 ######################################################################
 # 1. Minikube prüfen / starten
 ######################################################################
@@ -62,8 +70,20 @@ fi
 echo "Setze Docker-Umgebung auf Minikube…"
 eval "$(minikube docker-env)"
 
+echo "Mount lokale Trainingsdaten in Minikube (hostPath Quelle)..."
+echo "AUTOBAHN_LOCAL_DIR=${AUTOBAHN_LOCAL_DIR}"
+echo "WEATHER_LOCAL_DIR=${WEATHER_LOCAL_DIR}"
+echo "HINWEIS: minikube mount läuft als Prozess im Hintergrund."
+
+# Windows Git-Bash: Path-Konvertierung vermeiden
+MSYS_NO_PATHCONV=1 nohup minikube mount "${AUTOBAHN_LOCAL_DIR}:${AUTOBAHN_MK_DIR}" >/tmp/minikube_mount_autobahn.log 2>&1 &
+MSYS_NO_PATHCONV=1 nohup minikube mount "${WEATHER_LOCAL_DIR}:${WEATHER_MK_DIR}"   >/tmp/minikube_mount_weather.log  2>&1 &
+
+sleep 60
+echo "Mount-Prozesse gestartet. (Logs: /tmp/minikube_mount_autobahn.log /tmp/minikube_mount_weather.log)"
+
 ######################################################################
-# 1b) Sinnvolle Addons aktivieren (metrics-server, ingress)
+# 2. Sinnvolle Addons aktivieren (metrics-server, ingress)
 ######################################################################
 echo "Aktiviere Minikube-Addons (metrics-server, ingress)…"
 
@@ -82,7 +102,7 @@ else
 fi
 
 ######################################################################
-# 2. Strimzi / Kafka-Cluster (Namespace: kafka)
+# 3. Strimzi / Kafka-Cluster (Namespace: kafka)
 ######################################################################
 echo "Richte Strimzi / Kafka ein…"
 
@@ -95,7 +115,7 @@ else
 fi
 
 ######################################################################
-# 2a. Strimzi-Operator installieren (im Namespace kafka)
+# 4. Strimzi-Operator installieren (im Namespace kafka)
 ######################################################################
 echo "Installiere / aktualisiere Strimzi-Operator im Namespace 'kafka'…"
 
@@ -105,7 +125,7 @@ echo "Warte, bis Strimzi-Operator bereit ist…"
 kubectl rollout status deployment/strimzi-cluster-operator -n kafka --timeout=300s
 
 ######################################################################
-# 2b. Kafka Single-Node Cluster deployen (my-cluster)
+# 5. Kafka Single-Node Cluster deployen (my-cluster)
 ######################################################################
 echo "Erzeuge/aktualisiere Kafka-Cluster 'my-cluster' (Single-Node)…"
 
@@ -117,7 +137,7 @@ kubectl wait kafka/my-cluster --for=condition=Ready --timeout=600s -n kafka || {
 }
 
 ######################################################################
-# 2c. Kafka-Topic 'weather-raw' anlegen (für Weather Producer)
+# 6. Kafka-Topic 'weather-raw' anlegen (für Weather Producer)
 ######################################################################
 echo "Erzeuge/aktualisiere KafkaTopic 'weather-raw'…"
 
@@ -138,7 +158,7 @@ echo "Strimzi / Kafka-Setup abgeschlossen."
 echo "Kafka-Bootstrap-Address (intern): my-cluster-kafka-bootstrap.kafka.svc:9092"
 
 ######################################################################
-# 3. Docker-Image für Weather Producer bauen
+# 7. Docker-Image für Weather Producer bauen
 ######################################################################
 echo "Baue lokales Docker-Image 'weather-producer:latest' ..."
 
@@ -167,7 +187,7 @@ echo "Docker-Image 'weather-producer:latest' wurde erfolgreich gebaut."
 cd "${SCRIPT_DIR}"
 
 ######################################################################
-# 4. Kubernetes Deployment für Weather Producer anlegen/aktualisieren
+# 8. Kubernetes Deployment für Weather Producer anlegen/aktualisieren
 ######################################################################
 echo "Erzeuge/aktualisiere Deployment 'weather-producer' ..."
 
@@ -212,29 +232,7 @@ EOF
 echo "Deployment 'weather-producer' wurde angewendet."
 
 ######################################################################
-# 5. Scraper-Image bauen (autobahn + wetter)
-######################################################################
-echo "Baue lokales Docker-Image 'scraper:latest' ..."
-
-if [ ! -d "${SCRAPER_DIR}" ]; then
-  echo "FEHLER: Verzeichnis ${SCRAPER_DIR} existiert nicht. Bitte prüfe deine Projektstruktur."
-  exit 1
-fi
-
-cd "${SCRAPER_DIR}"
-
-if [ ! -f "Dockerfile" ]; then
-  echo "FEHLER: Dockerfile im Verzeichnis ${SCRAPER_DIR} nicht gefunden!"
-  exit 1
-fi
-
-docker build -t scraper:latest .
-
-echo "Docker-Image 'scraper:latest' wurde erfolgreich gebaut."
-cd "${SCRIPT_DIR}"
-
-######################################################################
-# 6. Docker-Image für Machine Learning Model (Jupyter) bauen
+# 9. Docker-Image für Machine Learning Model (Jupyter) bauen
 ######################################################################
 echo "Baue lokales Docker-Image 'machine-learning-model:latest' ..."
 
@@ -255,19 +253,137 @@ docker build -t machine-learning-model:latest .
 echo "Docker-Image 'machine-learning-model:latest' wurde erfolgreich gebaut."
 cd "${SCRIPT_DIR}"
 
+
 ######################################################################
-# 7. Machine Learning Model (Jupyter) deployen
+# 10. MariaDB deployen
 ######################################################################
-echo "Deploye Machine Learning Model (PVC + Deployment + Service)..."
+echo "Deploye MariaDB..."
+kubectl apply -f "${SCRIPT_DIR}/mariadb/k8s/mariadb.yaml"
+kubectl rollout status deploy/mariadb -n default --timeout=180s
+
+######################################################################
+# 11. Scraper-Image bauen (autobahn + wetter)
+######################################################################
+echo "Baue lokales Docker-Image 'scraper:latest' ..."
+
+if [ ! -d "${SCRAPER_DIR}" ]; then
+  echo "FEHLER: Verzeichnis ${SCRAPER_DIR} existiert nicht. Bitte prüfe deine Projektstruktur."
+  exit 1
+fi
+
+cd "${SCRAPER_DIR}"
+
+if [ ! -f "Dockerfile" ]; then
+  echo "FEHLER: Dockerfile im Verzeichnis ${SCRAPER_DIR} nicht gefunden!"
+  exit 1
+fi
+
+docker build -t scraper:latest .
+
+echo "Docker-Image 'scraper:latest' wurde erfolgreich gebaut."
+cd "${SCRIPT_DIR}"
+
+
+######################################################################
+# 12. Docker-Image für jupyter-consumer bauen
+######################################################################
+echo "Baue lokales Docker-Image 'jupyter-consumer:latest' ..."
+
+JUPYTER_CONSUMER_DIR="${SCRIPT_DIR}/jupyter-consumer"
+
+if [ ! -d "${JUPYTER_CONSUMER_DIR}" ]; then
+  echo "FEHLER: Verzeichnis ${JUPYTER_CONSUMER_DIR} existiert nicht."
+  exit 1
+fi
+
+cd "${JUPYTER_CONSUMER_DIR}"
+
+if [ ! -f "Dockerfile" ]; then
+  echo "FEHLER: Dockerfile im Verzeichnis ${JUPYTER_CONSUMER_DIR} nicht gefunden!"
+  exit 1
+fi
+
+docker build -t jupyter-consumer:latest .
+
+echo "Docker-Image 'jupyter-consumer:latest' wurde erfolgreich gebaut."
+cd "${SCRIPT_DIR}"
+
+
+######################################################################
+# Machine Learning Model (Jupyter) deployen
+######################################################################
+#echo "Deploye Machine Learning Model (PVC + Deployment + Service)..."
+
+#kubectl apply -f "${MACHINE_LEARNING_DIR}/k8s/mlflow-pvc.yaml"
+#kubectl apply -f "${MACHINE_LEARNING_DIR}/k8s/machine-learning-deployment.yaml"
+#kubectl apply -f "${MACHINE_LEARNING_DIR}/k8s/machine-learning-service.yaml"
+
+#echo "Machine Learning Model wurde deployed (NodePort 30089)."
+
+
+######################################################################
+# 13. MLflow PVC + Training Job ausführen (RUN_ID erzeugen)
+######################################################################
+echo "Deploye MLflow PVC + starte Training Job..."
 
 kubectl apply -f "${MACHINE_LEARNING_DIR}/k8s/mlflow-pvc.yaml"
-kubectl apply -f "${MACHINE_LEARNING_DIR}/k8s/machine-learning-deployment.yaml"
-kubectl apply -f "${MACHINE_LEARNING_DIR}/k8s/machine-learning-service.yaml"
 
-echo "Machine Learning Model wurde deployed (NodePort 30089)."
+# Job neu erstellen: wenn er schon existiert -> delete & recreate
+kubectl delete job ml-train -n default >/dev/null 2>&1 || true
+kubectl apply -f "${MACHINE_LEARNING_DIR}/k8s/train-job.yaml"
+
+echo "Warte auf Abschluss des Training Jobs (ml-train)..."
+kubectl wait --for=condition=complete job/ml-train -n default --timeout=900s || {
+  echo "TRAINING JOB FAILED. Logs:"
+  kubectl logs -n default job/ml-train --tail=200 || true
+  exit 1
+}
+
+echo "Training Job completed."
+
 
 ######################################################################
-# 8. CronJobs für Autobahn- und Wetter-Scraper anlegen
+# 14. jupyter-consumer deployen (startet erst wenn RUN_ID file da ist)
+######################################################################
+
+# jupyter-consumer deployen (hat den PVC gemountet)
+echo "Deploye jupyter-consumer..."
+kubectl apply -f "${SCRIPT_DIR}/jupyter-consumer/jupyter-consumer-deployment.yaml"
+kubectl rollout status deployment/jupyter-consumer -n default --timeout=300s
+echo "jupyter-consumer deployed."
+
+# RUN_ID über den laufenden consumer auslesen (kein exec in Completed Pod)
+echo "Prüfe RUN_ID im PVC über jupyter-consumer:"
+MSYS_NO_PATHCONV=1 kubectl exec -n default deploy/jupyter-consumer -- sh -lc \
+  'ls -lah /mlruns && echo "RUN_ID:" && cat /mlruns/LATEST_RUN_ID'
+
+######################################################################
+# 15. Heatmap (Jupyter) deployen
+######################################################################
+
+echo "Baue lokales Docker-Image 'heatmap:latest' ..."
+docker build -t heatmap:latest "${SCRIPT_DIR}/heatmap"
+echo "Heatmap Image gebaut."
+
+echo "Deploye Heatmap (Jupyter)..."
+kubectl apply -f "${SCRIPT_DIR}/heatmap/k8s/heatmap-jupyter.yaml"
+kubectl apply -f "${SCRIPT_DIR}/heatmap/k8s/heatmap-service.yaml"
+
+echo "Warte auf Heatmap Rollout..."
+if ! kubectl rollout status deploy/heatmap -n default --timeout=600s; then
+  echo "ERROR: Heatmap rollout failed. Debug info:"
+  kubectl get pods -l app=heatmap -o wide -n default || true
+  kubectl describe pod -l app=heatmap -n default || true
+  POD=$(kubectl get pod -l app=heatmap -n default -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+  if [ -n "$POD" ]; then
+    kubectl logs -n default "$POD" --tail=200 || true
+    kubectl logs -n default "$POD" --previous --tail=200 || true
+  fi
+  exit 1
+fi
+
+######################################################################
+# 16. CronJobs für Autobahn- und Wetter-Scraper anlegen
 ######################################################################
 echo "Erzeuge/aktualisiere CronJob 'autobahn-scraper' (alle 30 Minuten) ..."
 cat <<EOF | kubectl apply -f -
@@ -332,7 +448,7 @@ EOF
 echo "CronJobs 'autobahn-scraper' und 'wetter-scraper' wurden angewendet."
 
 ######################################################################
-# 8b. Sofortige Initial-Ausführung (Kickoff Jobs)
+# 17. Sofortige Initial-Ausführung (Kickoff Jobs)
 ######################################################################
 echo "Starte beide Scraper sofort einmalig (Kickoff Jobs)..."
 
@@ -351,7 +467,7 @@ kubectl get job "${WETTER_JOB}" -n default >/dev/null 2>&1 || \
 echo "Kickoff Jobs erstellt: ${AUTO_JOB}, ${WETTER_JOB}"
 
 ######################################################################
-# 9. ArgoCD installieren (falls nicht vorhanden)
+# 18. ArgoCD installieren (falls nicht vorhanden)
 ######################################################################
 echo "Prüfe ArgoCD-Installation…"
 
@@ -370,7 +486,7 @@ else
 fi
 
 ######################################################################
-# 10. ArgoCD Root-Application anlegen (GitOps-Einstiegspunkt)
+# 19. ArgoCD Root-Application anlegen (GitOps-Einstiegspunkt)
 ######################################################################
 echo "Erzeuge/aktualisiere ArgoCD Application '${ARGO_APP_NAME}'…"
 
@@ -403,7 +519,7 @@ echo "ArgoCD Application '${ARGO_APP_NAME}' wurde angewendet."
 echo "Stelle sicher, dass im Git-Repo unter Pfad '${ARGO_APP_PATH}' passende ArgoCD-Manifeste (z.B. App-of-Apps) liegen."
 
 ######################################################################
-# 11. Optional: Port-Forward für ArgoCD-UI
+# 20. Optional: Port-Forward für ArgoCD-UI
 ######################################################################
 echo "Richte optionales Port-Forward für ArgoCD-Weboberfläche ein…"
 

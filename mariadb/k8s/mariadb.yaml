@@ -1,0 +1,108 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mariadb-secret
+  namespace: default
+type: Opaque
+stringData:
+  MYSQL_ROOT_PASSWORD: root
+  MYSQL_DATABASE: predictions
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mariadb-pvc
+  namespace: default
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mariadb-initdb
+  namespace: default
+data:
+  01_init.sql: |
+    CREATE DATABASE IF NOT EXISTS predictions;
+    USE predictions;
+
+    CREATE TABLE IF NOT EXISTS forecast_predictions (
+      hour INT NOT NULL,
+      row INT NOT NULL,
+      col INT NOT NULL,
+      predicted_events INT NOT NULL,
+      timestamp DATETIME NOT NULL,
+      PRIMARY KEY (hour, row, col)
+    );
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mariadb
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mariadb
+  template:
+    metadata:
+      labels:
+        app: mariadb
+    spec:
+      containers:
+        - name: mariadb
+          image: mariadb:11
+          ports:
+            - containerPort: 3306
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mariadb-secret
+                  key: MYSQL_ROOT_PASSWORD
+            - name: MYSQL_DATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: mariadb-secret
+                  key: MYSQL_DATABASE
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mysql
+            - name: initdb
+              mountPath: /docker-entrypoint-initdb.d
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: mariadb-pvc
+        - name: initdb
+          configMap:
+            name: mariadb-initdb
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mariadb
+  namespace: default
+spec:
+  selector:
+    app: mariadb
+  ports:
+    - name: mysql
+      port: 3306
+      targetPort: 3306

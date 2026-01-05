@@ -17,3 +17,6 @@ shapely==2.0.6
 pyproj==3.7.0
 fiona==1.10.1
 requests==2.32.3
+
+pymysql
+sqlalchemy

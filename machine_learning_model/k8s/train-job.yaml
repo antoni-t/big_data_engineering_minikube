@@ -1,0 +1,54 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ml-train
+  namespace: default
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: ml-train
+          image: machine-learning-model:latest
+          imagePullPolicy: Never
+          command: ["python", "/app/train_and_log_mlflow.py"]
+          resources:
+            requests:
+              cpu: "1000m"
+              memory: "4Gi"
+            limits:
+              cpu: "2000m"
+              memory: "8Gi"
+          env:
+            - name: MLFLOW_TRACKING_URI
+              value: "file:/mlruns"
+            - name: LATEST_RUN_ID_FILE
+              value: "/mlruns/LATEST_RUN_ID"
+            - name: AUTOBAHN_DIR
+              value: "/autobahn_data"
+            - name: WEATHER_DIR
+              value: "/weather_hist"
+            - name: GRID_FILE
+              value: "/app/de_grid_sym_400.csv"
+          volumeMounts:
+            - name: mlflow-artifacts
+              mountPath: /mlruns
+            - name: autobahn-hist
+              mountPath: /autobahn_data
+              readOnly: true
+            - name: weather-hist
+              mountPath: /weather_hist
+              readOnly: true
+      volumes:
+        - name: mlflow-artifacts
+          persistentVolumeClaim:
+            claimName: mlflow-artifacts-pvc
+        - name: autobahn-hist
+          hostPath:
+            path: /mnt/autobahn_data
+            type: Directory
+        - name: weather-hist
+          hostPath:
+            path: /mnt/weather_hist
+            type: Directory
