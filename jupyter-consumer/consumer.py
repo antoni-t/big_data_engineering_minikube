@@ -178,6 +178,30 @@ def main():
         consumer_timeout_ms=0,
     )
 
+    print("KafkaConsumer created. Subscribing to topic:", topic)
+
+    # zwingt Metadata/Partition Assignment (sonst sieht man oft nix)
+    consumer.poll(timeout_ms=2000)
+
+    try:
+        parts = consumer.partitions_for_topic(topic)
+        print("Topic partitions:", parts)
+    except Exception as e:
+        print("ERROR reading partitions_for_topic:", repr(e))
+
+    try:
+        assignment = consumer.assignment()
+        print("Initial assignment:", assignment)
+    except Exception as e:
+        print("ERROR reading assignment:", repr(e))
+
+    try:
+        subs = consumer.subscription()
+        print("Subscription:", subs)
+    except Exception as e:
+        print("ERROR reading subscription:", repr(e))
+
+
     # Feature order from model (best)
     if hasattr(model, "feature_names_in_"):
         feature_cols = list(model.feature_names_in_)
@@ -198,10 +222,20 @@ def main():
 
         df = pd.DataFrame(batch)
 
+        print("FLUSH triggered. batch_size=", len(batch), "df_shape=", df.shape)
+        print("Incoming df columns:", list(df.columns))
+
+        # ein paar Zeilen anschauen
+        try:
+            print("Incoming head(2):", df.head(2).to_dict(orient="records"))
+        except Exception as e:
+            print("ERROR printing head:", repr(e))
+
+
         # --- basic required cols from weather-producer payload ---
         # row/col must exist for PK
         if "row" not in df.columns or "col" not in df.columns:
-            print("WARN: missing row/col -> skipping batch")
+            print("WARN: missing row/col -> skipping batch. cols=", list(df.columns))
             batch = []
             last_flush = time.time()
             return
@@ -210,9 +244,11 @@ def main():
         missing = [c for c in feature_cols if c not in df.columns]
         if missing:
             print("WARN: missing feature cols -> skipping batch:", missing)
+            print("Have cols:", list(df.columns))
             batch = []
             last_flush = time.time()
             return
+
 
         # Predict
         X = df[feature_cols].astype(float)
@@ -222,17 +258,34 @@ def main():
         # We store integer prediction for DB
         df["predicted_events"] = np.rint(pred).astype(int)
 
+        # DEBUG timestamps raw preview
+        for cand in ["timestamp_hour_local", "timestamp", "time"]:
+            if cand in df.columns:
+                print("Timestamp candidate:", cand, "sample:", df[cand].head(3).tolist())
+                break
+        else:
+            print("WARN: no timestamp candidate in payload. cols=", list(df.columns))
+
         # Add hour + timestamp column
         df2 = add_hour_column(df, ts_col_name="timestamp")
 
         if df2.empty:
             print("WARN: could not compute hour/timestamp -> skipping batch")
+            # mehr Details warum leer:
+            tmp = df.copy()
+            tmp["__ts__"] = _coerce_timestamp(tmp)
+            print("Parsed ts sample:", tmp["__ts__"].head(5).tolist())
+            print("Parsed ts null count:", int(tmp["__ts__"].isna().sum()), "of", len(tmp))
             batch = []
             last_flush = time.time()
             return
 
         # Keep only needed columns for upsert
         df_db = df2[["hour", "row", "col", "predicted_events", "timestamp"]].copy()
+
+        print("Prepared df_db:", df_db.shape,
+            "hour_min/max=", (df_db["hour"].min(), df_db["hour"].max()),
+            "ts_min/max=", (df_db["timestamp"].min(), df_db["timestamp"].max()))
 
         # Upsert
         upsert_predictions(engine, df_db)
@@ -241,13 +294,39 @@ def main():
         batch = []
         last_flush = time.time()
 
+    print("Entering consume loop...")
+
     for msg in consumer:
         payload = msg.value
+
+        # --- DEBUG: wir loggen nur die ersten 3 Messages pro Start, damit es nicht spammt ---
+        if len(batch) < 3:
+            try:
+                print(
+                    "GOT MSG:",
+                    "topic=", msg.topic,
+                    "partition=", msg.partition,
+                    "offset=", msg.offset,
+                    "key=", msg.key,
+                    "keys=", list(payload.keys()) if isinstance(payload, dict) else type(payload)
+                )
+                if isinstance(payload, dict):
+                    # sample einige Felder
+                    sample_keys = ["timestamp_hour_local","timestamp","time","row","col","temperature_2m","relative_humidity_2m","rain","snowfall"]
+                    sample = {k: payload.get(k) for k in sample_keys if k in payload}
+                    print("Payload sample:", sample)
+            except Exception as e:
+                print("ERROR while logging message:", repr(e))
+
         batch.append(payload)
+
 
         now = time.time()
         if len(batch) >= BATCH_SIZE or (now - last_flush) >= FLUSH_SEC:
             flush()
+
+    print("WARNING: consumer loop ended (should not happen). Sleeping 60s for debug...")
+    time.sleep(60)
 
     # never reached normally
     flush()

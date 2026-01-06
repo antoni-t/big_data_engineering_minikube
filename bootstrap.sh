@@ -348,7 +348,7 @@ echo "Training Job completed."
 
 # jupyter-consumer deployen (hat den PVC gemountet)
 echo "Deploye jupyter-consumer..."
-kubectl apply -f "${SCRIPT_DIR}/jupyter-consumer/jupyter-consumer-deployment.yaml"
+kubectl apply -f "${SCRIPT_DIR}/jupyter-consumer/k8s/jupyter-consumer-deployment.yaml"
 kubectl rollout status deployment/jupyter-consumer -n default --timeout=300s
 echo "jupyter-consumer deployed."
 
