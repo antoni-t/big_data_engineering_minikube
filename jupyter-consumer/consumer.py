@@ -54,18 +54,16 @@ def _coerce_timestamp(df: pd.DataFrame) -> pd.Series:
     """
     Find and parse the timestamp column from incoming payloads.
     Accepts typical keys from your pipeline:
-      - timestamp_hour_local (current)
+      - timestamp_hour_local (current)  e.g. "2026-01-08T14:00:00+01:00"
       - timestamp
       - time
-    Returns pandas datetime64[ns] (naive, suitable for MariaDB DATETIME).
+    Returns pandas datetime64[ns] (timezone-aware if input has tz).
     """
     candidates = ["timestamp_hour_local", "timestamp", "time"]
     for c in candidates:
         if c in df.columns:
-            # parse ISO like "2026-01-04T00:00" -> datetime
             ts = pd.to_datetime(df[c], errors="coerce")
             return ts
-    # no candidate found
     return pd.to_datetime(pd.Series([pd.NaT] * len(df)), errors="coerce")
 
 
@@ -79,16 +77,14 @@ def add_hour_column(df: pd.DataFrame, ts_col_name: str = "timestamp") -> pd.Data
 
     # Drop rows where timestamp couldn't be parsed
     out = out.dropna(subset=[ts_col_name]).copy()
-
     if out.empty:
         return out
 
-    base = out[ts_col_name].min().floor("D")  # 00:00 of day-1
+    base = out[ts_col_name].min().floor("D")
     out["hour"] = ((out[ts_col_name] - base) / pd.Timedelta(hours=1)).astype(int) + 1
 
     # Keep only 1..72 if you strictly want 3 days * 24 hours
     out = out[(out["hour"] >= 1) & (out["hour"] <= 72)].copy()
-
     return out
 
 
@@ -104,32 +100,46 @@ ON DUPLICATE KEY UPDATE
 def upsert_predictions(engine, df: pd.DataFrame) -> None:
     """
     Expects df columns: hour,row,col,predicted_events,timestamp
+    Writes MariaDB DATETIME as *naive UTC* (no timezone info).
     """
     if df.empty:
         return
 
-    # Ensure proper dtypes
     df = df.copy()
+
+    # Ensure proper dtypes
     df["hour"] = pd.to_numeric(df["hour"], errors="coerce").astype("Int64")
     df["row"] = pd.to_numeric(df["row"], errors="coerce").astype("Int64")
     df["col"] = pd.to_numeric(df["col"], errors="coerce").astype("Int64")
-    df["predicted_events"] = pd.to_numeric(df["predicted_events"], errors="coerce").fillna(0).astype(int)
+    df["predicted_events"] = (
+        pd.to_numeric(df["predicted_events"], errors="coerce")
+        .fillna(0)
+        .astype(int)
+    )
 
+    # Parse timestamp robustly
+    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+
+    # Drop bad rows
     df = df.dropna(subset=["hour", "row", "col", "timestamp"]).copy()
     if df.empty:
         return
 
-    # Convert to python-native values for SQLAlchemy executemany
-    rows = []
+    rows: list[dict] = []
     for r in df[["hour", "row", "col", "predicted_events", "timestamp"]].itertuples(index=False):
+        ts = pd.Timestamp(r.timestamp)
+
+        # Convert tz-aware -> UTC naive for MariaDB DATETIME
+        if ts.tzinfo is not None:
+            ts = ts.tz_convert("UTC").tz_localize(None)
+
         rows.append(
             {
                 "hour": int(r.hour),
                 "row": int(r.row),
                 "col": int(r.col),
                 "predicted_events": int(r.predicted_events),
-                # MariaDB DATETIME: pass naive datetime
-                "timestamp": pd.Timestamp(r.timestamp).to_pydatetime(),
+                "timestamp": ts.to_pydatetime(),
             }
         )
 
@@ -172,10 +182,10 @@ def main():
         bootstrap_servers=[kafka_bootstrap],
         group_id=group_id,
         enable_auto_commit=True,
-        auto_offset_reset="latest",
+        auto_offset_reset="earliest",
         value_deserializer=lambda v: json.loads(v.decode("utf-8")),
         key_deserializer=lambda k: k.decode("utf-8") if k else None,
-        consumer_timeout_ms=0,
+        consumer_timeout_ms=1000,  # wichtig: Iterator darf „leer“ zurückkommen
     )
 
     print("KafkaConsumer created. Subscribing to topic:", topic)
@@ -201,12 +211,18 @@ def main():
     except Exception as e:
         print("ERROR reading subscription:", repr(e))
 
-
     # Feature order from model (best)
     if hasattr(model, "feature_names_in_"):
         feature_cols = list(model.feature_names_in_)
     else:
-        feature_cols = ["temperature_2m", "relative_humidity_2m", "rain", "snowfall", "row", "col"]
+        feature_cols = [
+            "temperature_2m",
+            "relative_humidity_2m",
+            "rain",
+            "snowfall",
+            "row",
+            "col",
+        ]
 
     print("Feature cols:", feature_cols)
 
@@ -231,8 +247,6 @@ def main():
         except Exception as e:
             print("ERROR printing head:", repr(e))
 
-
-        # --- basic required cols from weather-producer payload ---
         # row/col must exist for PK
         if "row" not in df.columns or "col" not in df.columns:
             print("WARN: missing row/col -> skipping batch. cols=", list(df.columns))
@@ -248,7 +262,6 @@ def main():
             batch = []
             last_flush = time.time()
             return
-
 
         # Predict
         X = df[feature_cols].astype(float)
@@ -271,7 +284,6 @@ def main():
 
         if df2.empty:
             print("WARN: could not compute hour/timestamp -> skipping batch")
-            # mehr Details warum leer:
             tmp = df.copy()
             tmp["__ts__"] = _coerce_timestamp(tmp)
             print("Parsed ts sample:", tmp["__ts__"].head(5).tolist())
@@ -283,9 +295,14 @@ def main():
         # Keep only needed columns for upsert
         df_db = df2[["hour", "row", "col", "predicted_events", "timestamp"]].copy()
 
-        print("Prepared df_db:", df_db.shape,
-            "hour_min/max=", (df_db["hour"].min(), df_db["hour"].max()),
-            "ts_min/max=", (df_db["timestamp"].min(), df_db["timestamp"].max()))
+        print(
+            "Prepared df_db:",
+            df_db.shape,
+            "hour_min/max=",
+            (df_db["hour"].min(), df_db["hour"].max()),
+            "ts_min/max=",
+            (df_db["timestamp"].min(), df_db["timestamp"].max()),
+        )
 
         # Upsert
         upsert_predictions(engine, df_db)
@@ -296,40 +313,58 @@ def main():
 
     print("Entering consume loop...")
 
-    for msg in consumer:
-        payload = msg.value
+    # ------------------------------------------------------------------
+    # NEW: robust loop that never exits if Kafka is temporarily quiet
+    # ------------------------------------------------------------------
+    while True:
+        got_message = False
 
-        # --- DEBUG: wir loggen nur die ersten 3 Messages pro Start, damit es nicht spammt ---
-        if len(batch) < 3:
-            try:
-                print(
-                    "GOT MSG:",
-                    "topic=", msg.topic,
-                    "partition=", msg.partition,
-                    "offset=", msg.offset,
-                    "key=", msg.key,
-                    "keys=", list(payload.keys()) if isinstance(payload, dict) else type(payload)
-                )
-                if isinstance(payload, dict):
-                    # sample einige Felder
-                    sample_keys = ["timestamp_hour_local","timestamp","time","row","col","temperature_2m","relative_humidity_2m","rain","snowfall"]
-                    sample = {k: payload.get(k) for k in sample_keys if k in payload}
-                    print("Payload sample:", sample)
-            except Exception as e:
-                print("ERROR while logging message:", repr(e))
+        for msg in consumer:
+            got_message = True
+            payload = msg.value
 
-        batch.append(payload)
+            # --- DEBUG: wir loggen nur die ersten 3 Messages pro Start, damit es nicht spammt ---
+            if len(batch) < 3:
+                try:
+                    print(
+                        "GOT MSG:",
+                        "topic=", msg.topic,
+                        "partition=", msg.partition,
+                        "offset=", msg.offset,
+                        "key=", msg.key,
+                        "keys=", list(payload.keys()) if isinstance(payload, dict) else type(payload),
+                    )
+                    if isinstance(payload, dict):
+                        sample_keys = [
+                            "timestamp_hour_local",
+                            "timestamp",
+                            "time",
+                            "row",
+                            "col",
+                            "temperature_2m",
+                            "relative_humidity_2m",
+                            "rain",
+                            "snowfall",
+                        ]
+                        sample = {k: payload.get(k) for k in sample_keys if k in payload}
+                        print("Payload sample:", sample)
+                except Exception as e:
+                    print("ERROR while logging message:", repr(e))
 
+            batch.append(payload)
 
+            now = time.time()
+            if len(batch) >= BATCH_SIZE or (now - last_flush) >= FLUSH_SEC:
+                flush()
+
+        if not got_message:
+            print("WARN: iterator ended; continuing (no messages right now)")
+            time.sleep(2)
+
+        # optional: in case a batch is sitting around and no new messages arrive
         now = time.time()
-        if len(batch) >= BATCH_SIZE or (now - last_flush) >= FLUSH_SEC:
+        if batch and (now - last_flush) >= FLUSH_SEC:
             flush()
-
-    print("WARNING: consumer loop ended (should not happen). Sleeping 60s for debug...")
-    time.sleep(60)
-
-    # never reached normally
-    flush()
 
 
 if __name__ == "__main__":
