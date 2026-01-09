@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: weather-producer
-  namespace: default   # oder eigener Namespace, z.B. data-pipeline
+  namespace: default
 spec:
   replicas: 1
   selector:
@@ -16,7 +16,7 @@ spec:
       containers:
         - name: weather-producer
           image: weather-producer:latest
-          imagePullPolicy: Never   # wichtig: nutze lokales Minikube-Image
+          imagePullPolicy: Never
           env:
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: "my-cluster-kafka-bootstrap.kafka.svc:9092"
@@ -26,7 +26,6 @@ spec:
               value: "/app/de_grid_cell_centers.csv"
             - name: POLL_INTERVAL_SECONDS
               value: "3600"
-          # Optional: Ressourcenlimits
           resources:
             requests:
               cpu: "100m"

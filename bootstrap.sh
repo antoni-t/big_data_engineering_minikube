@@ -61,7 +61,7 @@ fi
 echo "Prüfe Minikube-Status…"
 if ! minikube status >/dev/null 2>&1; then
   echo "Minikube läuft nicht – starte Minikube mit Docker-Driver."
-  minikube start --driver=docker
+  minikube start --driver=docker --cpus=4 --memory=10240 
 else
   echo "Minikube ist bereits gestartet."
 fi
@@ -157,8 +157,86 @@ echo "KafkaTopic 'weather-raw' wurde angewendet."
 echo "Strimzi / Kafka-Setup abgeschlossen."
 echo "Kafka-Bootstrap-Address (intern): my-cluster-kafka-bootstrap.kafka.svc:9092"
 
+
 ######################################################################
-# 7. Docker-Image für Weather Producer bauen
+# 7. MariaDB deployen
+######################################################################
+echo "Deploye MariaDB..."
+kubectl apply -f "${SCRIPT_DIR}/mariadb/k8s/mariadb.yaml"
+kubectl rollout status deploy/mariadb -n default --timeout=180s
+
+######################################################################
+# 8. Docker-Image für Machine Learning Model (Jupyter) bauen
+######################################################################
+echo "Baue lokales Docker-Image 'machine-learning-model:latest' ..."
+
+if [ ! -d "${MACHINE_LEARNING_DIR}" ]; then
+  echo "FEHLER: Verzeichnis ${MACHINE_LEARNING_DIR} existiert nicht."
+  exit 1
+fi
+
+cd "${MACHINE_LEARNING_DIR}"
+
+if [ ! -f "Dockerfile" ]; then
+  echo "FEHLER: Dockerfile im Verzeichnis ${MACHINE_LEARNING_DIR} nicht gefunden!"
+  exit 1
+fi
+
+docker build -t machine-learning-model:latest .
+
+echo "Docker-Image 'machine-learning-model:latest' wurde erfolgreich gebaut."
+cd "${SCRIPT_DIR}"
+
+######################################################################
+# 9. Scraper-Image bauen (autobahn + wetter)
+######################################################################
+echo "Baue lokales Docker-Image 'scraper:latest' ..."
+
+if [ ! -d "${SCRAPER_DIR}" ]; then
+  echo "FEHLER: Verzeichnis ${SCRAPER_DIR} existiert nicht. Bitte prüfe deine Projektstruktur."
+  exit 1
+fi
+
+cd "${SCRAPER_DIR}"
+
+if [ ! -f "Dockerfile" ]; then
+  echo "FEHLER: Dockerfile im Verzeichnis ${SCRAPER_DIR} nicht gefunden!"
+  exit 1
+fi
+
+docker build -t scraper:latest .
+
+echo "Docker-Image 'scraper:latest' wurde erfolgreich gebaut."
+cd "${SCRIPT_DIR}"
+
+
+######################################################################
+# 10. Docker-Image für jupyter-consumer bauen
+######################################################################
+echo "Baue lokales Docker-Image 'jupyter-consumer:latest' ..."
+
+JUPYTER_CONSUMER_DIR="${SCRIPT_DIR}/jupyter-consumer"
+
+if [ ! -d "${JUPYTER_CONSUMER_DIR}" ]; then
+  echo "FEHLER: Verzeichnis ${JUPYTER_CONSUMER_DIR} existiert nicht."
+  exit 1
+fi
+
+cd "${JUPYTER_CONSUMER_DIR}"
+
+if [ ! -f "Dockerfile" ]; then
+  echo "FEHLER: Dockerfile im Verzeichnis ${JUPYTER_CONSUMER_DIR} nicht gefunden!"
+  exit 1
+fi
+
+docker build -t jupyter-consumer:latest .
+
+echo "Docker-Image 'jupyter-consumer:latest' wurde erfolgreich gebaut."
+cd "${SCRIPT_DIR}"
+
+
+######################################################################
+# 11. Docker-Image für Weather Producer bauen
 ######################################################################
 echo "Baue lokales Docker-Image 'weather-producer:latest' ..."
 
@@ -186,143 +264,10 @@ echo "Docker-Image 'weather-producer:latest' wurde erfolgreich gebaut."
 # Zurück ins ursprüngliche Verzeichnis (Repo-Root)
 cd "${SCRIPT_DIR}"
 
-######################################################################
-# 8. Kubernetes Deployment für Weather Producer anlegen/aktualisieren
-######################################################################
-echo "Erzeuge/aktualisiere Deployment 'weather-producer' ..."
-
-cat <<EOF | kubectl apply -f -
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: weather-producer
-  namespace: default
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: weather-producer
-  template:
-    metadata:
-      labels:
-        app: weather-producer
-    spec:
-      containers:
-        - name: weather-producer
-          image: weather-producer:latest
-          imagePullPolicy: Never   # wichtig: nutze lokales Minikube-Image
-          env:
-            - name: KAFKA_BOOTSTRAP_SERVERS
-              value: "my-cluster-kafka-bootstrap.kafka.svc:9092"
-            - name: KAFKA_TOPIC
-              value: "weather-raw"
-            - name: GRID_PATH
-              value: "de_grid_cell_centers.csv"
-            - name: POLL_INTERVAL_SECONDS
-              value: "3600"
-          resources:
-            requests:
-              cpu: "100m"
-              memory: "256Mi"
-            limits:
-              cpu: "500m"
-              memory: "512Mi"
-EOF
-
-echo "Deployment 'weather-producer' wurde angewendet."
-
-######################################################################
-# 9. Docker-Image für Machine Learning Model (Jupyter) bauen
-######################################################################
-echo "Baue lokales Docker-Image 'machine-learning-model:latest' ..."
-
-if [ ! -d "${MACHINE_LEARNING_DIR}" ]; then
-  echo "FEHLER: Verzeichnis ${MACHINE_LEARNING_DIR} existiert nicht."
-  exit 1
-fi
-
-cd "${MACHINE_LEARNING_DIR}"
-
-if [ ! -f "Dockerfile" ]; then
-  echo "FEHLER: Dockerfile im Verzeichnis ${MACHINE_LEARNING_DIR} nicht gefunden!"
-  exit 1
-fi
-
-docker build -t machine-learning-model:latest .
-
-echo "Docker-Image 'machine-learning-model:latest' wurde erfolgreich gebaut."
-cd "${SCRIPT_DIR}"
 
 
 ######################################################################
-# 10. MariaDB deployen
-######################################################################
-echo "Deploye MariaDB..."
-kubectl apply -f "${SCRIPT_DIR}/mariadb/k8s/mariadb.yaml"
-kubectl rollout status deploy/mariadb -n default --timeout=180s
-
-######################################################################
-# 11. Scraper-Image bauen (autobahn + wetter)
-######################################################################
-echo "Baue lokales Docker-Image 'scraper:latest' ..."
-
-if [ ! -d "${SCRAPER_DIR}" ]; then
-  echo "FEHLER: Verzeichnis ${SCRAPER_DIR} existiert nicht. Bitte prüfe deine Projektstruktur."
-  exit 1
-fi
-
-cd "${SCRAPER_DIR}"
-
-if [ ! -f "Dockerfile" ]; then
-  echo "FEHLER: Dockerfile im Verzeichnis ${SCRAPER_DIR} nicht gefunden!"
-  exit 1
-fi
-
-docker build -t scraper:latest .
-
-echo "Docker-Image 'scraper:latest' wurde erfolgreich gebaut."
-cd "${SCRIPT_DIR}"
-
-
-######################################################################
-# 12. Docker-Image für jupyter-consumer bauen
-######################################################################
-echo "Baue lokales Docker-Image 'jupyter-consumer:latest' ..."
-
-JUPYTER_CONSUMER_DIR="${SCRIPT_DIR}/jupyter-consumer"
-
-if [ ! -d "${JUPYTER_CONSUMER_DIR}" ]; then
-  echo "FEHLER: Verzeichnis ${JUPYTER_CONSUMER_DIR} existiert nicht."
-  exit 1
-fi
-
-cd "${JUPYTER_CONSUMER_DIR}"
-
-if [ ! -f "Dockerfile" ]; then
-  echo "FEHLER: Dockerfile im Verzeichnis ${JUPYTER_CONSUMER_DIR} nicht gefunden!"
-  exit 1
-fi
-
-docker build -t jupyter-consumer:latest .
-
-echo "Docker-Image 'jupyter-consumer:latest' wurde erfolgreich gebaut."
-cd "${SCRIPT_DIR}"
-
-
-######################################################################
-# Machine Learning Model (Jupyter) deployen
-######################################################################
-#echo "Deploye Machine Learning Model (PVC + Deployment + Service)..."
-
-#kubectl apply -f "${MACHINE_LEARNING_DIR}/k8s/mlflow-pvc.yaml"
-#kubectl apply -f "${MACHINE_LEARNING_DIR}/k8s/machine-learning-deployment.yaml"
-#kubectl apply -f "${MACHINE_LEARNING_DIR}/k8s/machine-learning-service.yaml"
-
-#echo "Machine Learning Model wurde deployed (NodePort 30089)."
-
-
-######################################################################
-# 13. MLflow PVC + Training Job ausführen (RUN_ID erzeugen)
+# 12. MLflow PVC + Training Job ausführen (RUN_ID erzeugen)
 ######################################################################
 echo "Deploye MLflow PVC + starte Training Job..."
 
@@ -343,7 +288,7 @@ echo "Training Job completed."
 
 
 ######################################################################
-# 14. jupyter-consumer deployen (startet erst wenn RUN_ID file da ist)
+# 13. jupyter-consumer deployen (startet erst wenn RUN_ID file da ist)
 ######################################################################
 
 # jupyter-consumer deployen (hat den PVC gemountet)
@@ -356,6 +301,21 @@ echo "jupyter-consumer deployed."
 echo "Prüfe RUN_ID im PVC über jupyter-consumer:"
 MSYS_NO_PATHCONV=1 kubectl exec -n default deploy/jupyter-consumer -- sh -lc \
   'ls -lah /mlruns && echo "RUN_ID:" && cat /mlruns/LATEST_RUN_ID'
+
+
+######################################################################
+# 14. Kubernetes Deployment für Weather Producer anlegen/aktualisieren
+######################################################################
+
+echo "Erzeuge/aktualisiere Deployment 'weather-producer' ..."
+
+kubectl apply -f "${SCRIPT_DIR}/weather-producer/k8s/deployment-weather-producer.yaml"
+
+echo "Warte auf Weather Producer Rollout..."
+kubectl rollout status deploy/weather-producer -n default --timeout=180s
+
+echo "Deployment 'weather-producer' ist Ready."
+
 
 ######################################################################
 # 15. Heatmap (Jupyter) deployen
