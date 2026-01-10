@@ -31,12 +31,12 @@ SCRAPER_DIR="${SCRIPT_DIR}/scraper"
 MACHINE_LEARNING_DIR="${SCRIPT_DIR}/machine_learning_model"
 
 # Lokale Trainingsdaten (Windows) -> in Minikube mounten
-AUTOBAHN_LOCAL_DIR="${AUTOBAHN_LOCAL_DIR:-C:/Users/thoma/DHBW_master_semester_3/big_data_engineering/Gruppen-Projekt/ML_training_final/Alle-Autobahn-Daten/autobahn}"
-WEATHER_LOCAL_DIR="${WEATHER_LOCAL_DIR:-C:/Users/thoma/DHBW_master_semester_3/big_data_engineering/Gruppen-Projekt/ML_training_final/weather_data}"
+#AUTOBAHN_LOCAL_DIR="${AUTOBAHN_LOCAL_DIR:-C:/Users/thoma/DHBW_master_semester_3/big_data_engineering/Gruppen-Projekt/ML_training_final/Alle-Autobahn-Daten/autobahn}"
+#WEATHER_LOCAL_DIR="${WEATHER_LOCAL_DIR:-C:/Users/thoma/DHBW_master_semester_3/big_data_engineering/Gruppen-Projekt/ML_training_final/weather_data}"
 
 # Zielpfade in Minikube VM
-AUTOBAHN_MK_DIR="/mnt/autobahn_data"
-WEATHER_MK_DIR="/mnt/weather_hist"
+#AUTOBAHN_MK_DIR="/mnt/autobahn_data"
+#WEATHER_MK_DIR="/mnt/weather_hist"
 
 
 echo "=== Big Data Engineering Bootstrap startet ==="
@@ -70,17 +70,11 @@ fi
 echo "Setze Docker-Umgebung auf Minikube…"
 eval "$(minikube docker-env)"
 
-echo "Mount lokale Trainingsdaten in Minikube (hostPath Quelle)..."
-echo "AUTOBAHN_LOCAL_DIR=${AUTOBAHN_LOCAL_DIR}"
-echo "WEATHER_LOCAL_DIR=${WEATHER_LOCAL_DIR}"
-echo "HINWEIS: minikube mount läuft als Prozess im Hintergrund."
-
-# Windows Git-Bash: Path-Konvertierung vermeiden
-MSYS_NO_PATHCONV=1 nohup minikube mount "${AUTOBAHN_LOCAL_DIR}:${AUTOBAHN_MK_DIR}" >/tmp/minikube_mount_autobahn.log 2>&1 &
-MSYS_NO_PATHCONV=1 nohup minikube mount "${WEATHER_LOCAL_DIR}:${WEATHER_MK_DIR}"   >/tmp/minikube_mount_weather.log  2>&1 &
-
-sleep 60
-echo "Mount-Prozesse gestartet. (Logs: /tmp/minikube_mount_autobahn.log /tmp/minikube_mount_weather.log)"
+echo "Mounts werden NICHT mehr vom bootstrap.sh gestartet."
+echo "Bitte stelle sicher, dass die beiden minikube mount Terminals noch laufen."
+echo "Erwartete Mount-Ziele in Minikube:"
+echo "  /mnt/autobahn_data"
+echo "  /mnt/weather_hist"
 
 ######################################################################
 # 2. Sinnvolle Addons aktivieren (metrics-server, ingress)
@@ -278,7 +272,7 @@ kubectl delete job ml-train -n default >/dev/null 2>&1 || true
 kubectl apply -f "${MACHINE_LEARNING_DIR}/k8s/train-job.yaml"
 
 echo "Warte auf Abschluss des Training Jobs (ml-train)..."
-kubectl wait --for=condition=complete job/ml-train -n default --timeout=6000s || {
+kubectl wait --for=condition=complete job/ml-train -n default --timeout=3000s || {
   echo "TRAINING JOB FAILED. Logs:"
   kubectl logs -n default job/ml-train --tail=200 || true
   exit 1
