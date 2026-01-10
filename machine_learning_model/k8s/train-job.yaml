@@ -27,19 +27,19 @@ spec:
             - name: LATEST_RUN_ID_FILE
               value: "/mlruns/LATEST_RUN_ID"
             - name: AUTOBAHN_DIR
-              value: "/mnt/autobahn_data"
+              value: "/autobahn_data"
             - name: WEATHER_DIR
-              value: "/mnt/weather_hist"
+              value: "/weather_hist"
             - name: GRID_FILE
               value: "/app/de_grid_sym_400.csv"
           volumeMounts:
             - name: mlflow-artifacts
               mountPath: /mlruns
             - name: autobahn-hist
-              mountPath: /autobahn_data
+              mountPath: /mnt/autobahn_data
               readOnly: true
             - name: weather-hist
-              mountPath: /weather_hist
+              mountPath: /mnt/weather_hist
               readOnly: true
       volumes:
         - name: mlflow-artifacts
