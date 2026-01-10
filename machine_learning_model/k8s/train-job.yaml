@@ -4,7 +4,8 @@ metadata:
   name: ml-train
   namespace: default
 spec:
-  backoffLimit: 0
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 3600
   template:
     spec:
       restartPolicy: Never

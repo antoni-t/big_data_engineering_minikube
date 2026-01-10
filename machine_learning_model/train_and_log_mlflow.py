@@ -26,10 +26,15 @@ def load_jsonl_gz_recursive(root: Path) -> pd.DataFrame:
     files = list(root.rglob("*.jsonl.gz"))
     if not files:
         raise FileNotFoundError(f"No .jsonl.gz files found under: {root}")
-    frames = []
-    for f in files:
-        frames.append(pd.read_json(f, lines=True, compression="gzip"))
-    return pd.concat(frames, ignore_index=True)
+
+    out = []
+    for i, f in enumerate(files, 1):
+        df = pd.read_json(f, lines=True, compression="gzip")
+        out.append(df)
+        if i % 50 == 0:
+            print(f"loaded {i}/{len(files)} files; current rows={sum(len(x) for x in out)}")
+
+    return pd.concat(out, ignore_index=True)
 
 def build_events_from_autobahn(autobahn_raw: pd.DataFrame) -> pd.DataFrame:
     df = autobahn_raw.dropna(subset=["payload"]).copy()
