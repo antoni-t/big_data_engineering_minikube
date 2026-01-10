@@ -1,0 +1,18 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: jupyter-consumer
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/antoni-t/big_data_engineering_minikube.git
+    targetRevision: main
+    path: jupyter-consumer/k8s
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

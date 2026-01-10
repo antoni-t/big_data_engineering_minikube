@@ -295,6 +295,8 @@ echo "Training Job completed."
 echo "Deploye jupyter-consumer..."
 kubectl apply -f "${SCRIPT_DIR}/jupyter-consumer/k8s/jupyter-consumer-deployment.yaml"
 kubectl rollout status deployment/jupyter-consumer -n default --timeout=300s
+kubectl apply -f "${SCRIPT_DIR}/jupyter-consumer/k8s/jupyter-consumer-hpa.yaml"
+
 echo "jupyter-consumer deployed."
 
 # RUN_ID über den laufenden consumer auslesen (kein exec in Completed Pod)
