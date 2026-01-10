@@ -5,6 +5,7 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 
+from datetime import datetime
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
@@ -22,8 +23,27 @@ LATEST_RUN_ID_FILE  = Path(os.getenv("LATEST_RUN_ID_FILE", "/mlruns/LATEST_RUN_I
 # -----------------------------
 # Helpers
 # -----------------------------
-def load_jsonl_gz_recursive(root: Path) -> pd.DataFrame:
-    files = list(root.rglob("*.jsonl.gz"))
+
+def list_jsonl_gz_by_structure(root: Path) -> list[Path]:
+    # erwartet: root/YYYY/MM/DD/HH/*.jsonl.gz
+    files: list[Path] = []
+    for year_dir in sorted(root.glob("[0-9][0-9][0-9][0-9]")):
+        if not year_dir.is_dir():
+            continue
+        for month_dir in sorted(year_dir.glob("[0-9][0-9]")):
+            if not month_dir.is_dir():
+                continue
+            for day_dir in sorted(month_dir.glob("[0-9][0-9]")):
+                if not day_dir.is_dir():
+                    continue
+                for hour_dir in sorted(day_dir.glob("[0-9][0-9]")):
+                    if not hour_dir.is_dir():
+                        continue
+                    files.extend(sorted(hour_dir.glob("*.jsonl.gz")))
+    return files
+
+def load_jsonl_gz_structured(root: Path) -> pd.DataFrame:
+    files = list_jsonl_gz_by_structure(root)
     if not files:
         raise FileNotFoundError(f"No .jsonl.gz files found under: {root}")
 
@@ -32,7 +52,8 @@ def load_jsonl_gz_recursive(root: Path) -> pd.DataFrame:
         df = pd.read_json(f, lines=True, compression="gzip")
         out.append(df)
         if i % 50 == 0:
-            print(f"loaded {i}/{len(files)} files; current rows={sum(len(x) for x in out)}")
+            rows = sum(len(x) for x in out)
+            print(f"loaded {i}/{len(files)} files; current rows={rows}")
 
     return pd.concat(out, ignore_index=True)
 
@@ -124,7 +145,7 @@ def main():
     mlflow.set_experiment("autobahn_event_forecast_rf")
 
     # 1) Autobahn laden (gemountet)
-    autobahn_raw = load_jsonl_gz_recursive(AUTOBAHN_DIR)
+    autobahn_raw = load_jsonl_gz_structured(AUTOBAHN_DIR)
     print("autobahn_raw shape:", autobahn_raw.shape)
 
     # 2) Events -> cell-hour Aggregation
@@ -140,7 +161,7 @@ def main():
     #    -> Falls du Weather noch nicht im Pod erzeugst, kannst du WEATHER_DIR mounten.
     #    -> Oder du ergänzt später hier den Open-Meteo Archive-Call (du hattest bereits ein gutes Script).
     if WEATHER_DIR.exists() and list(WEATHER_DIR.rglob("*.jsonl.gz")):
-        weather = load_jsonl_gz_recursive(WEATHER_DIR)
+        weather = load_jsonl_gz_structured(WEATHER_DIR)
         # weather columns expected: time,id,row,col,temperature_2m,rain,snowfall,relative_humidity_2m...
         if "time" in weather.columns:
             weather["time"] = pd.to_datetime(weather["time"], utc=True, errors="coerce")

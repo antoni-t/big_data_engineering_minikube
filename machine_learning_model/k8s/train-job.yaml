@@ -27,9 +27,9 @@ spec:
             - name: LATEST_RUN_ID_FILE
               value: "/mlruns/LATEST_RUN_ID"
             - name: AUTOBAHN_DIR
-              value: "/autobahn_data"
+              value: "/mnt/autobahn_data"
             - name: WEATHER_DIR
-              value: "/weather_hist"
+              value: "/mnt/weather_hist"
             - name: GRID_FILE
               value: "/app/de_grid_sym_400.csv"
           volumeMounts:
