@@ -272,7 +272,7 @@ kubectl delete job ml-train -n default >/dev/null 2>&1 || true
 kubectl apply -f "${MACHINE_LEARNING_DIR}/k8s/train-job.yaml"
 
 echo "Warte auf Abschluss des Training Jobs (ml-train)..."
-kubectl wait --for=condition=complete job/ml-train -n default --timeout=3000s || {
+kubectl wait --for=condition=complete job/ml-train -n default --timeout=4000s || {
   echo "TRAINING JOB FAILED. Logs:"
   kubectl logs -n default job/ml-train --tail=200 || true
   exit 1
