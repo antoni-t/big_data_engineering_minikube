@@ -298,7 +298,7 @@ echo "Prüfe RUN_ID im PVC über jupyter-consumer:"
 MSYS_NO_PATHCONV=1 kubectl exec -n default deploy/jupyter-consumer -- sh -lc \
   'ls -lah /mlruns && echo "RUN_ID:" && cat /mlruns/LATEST_RUN_ID'
 
-sleep 600
+sleep 300
 
 ######################################################################
 # 14. Kubernetes Deployment für Weather Producer anlegen/aktualisieren
