@@ -157,7 +157,7 @@ echo "Kafka-Bootstrap-Address (intern): my-cluster-kafka-bootstrap.kafka.svc:909
 ######################################################################
 echo "Deploye MariaDB..."
 kubectl apply -f "${SCRIPT_DIR}/mariadb/k8s/mariadb.yaml"
-kubectl rollout status deploy/mariadb -n default --timeout=180s
+kubectl rollout status deploy/mariadb -n default --timeout=300s
 
 ######################################################################
 # 8. Docker-Image für Machine Learning Model (Jupyter) bauen
