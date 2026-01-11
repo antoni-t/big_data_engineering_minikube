@@ -80,33 +80,11 @@ spec:
               mountPath: /docker-entrypoint-initdb.d
           resources:
             requests:
-              cpu: "500m"
-              memory: "1Gi"
+              cpu: "250m"
+              memory: "512Mi"
             limits:
-              cpu: "2000m"
-              memory: "3Gi"
-          readinessProbe:
-            exec:
-              command:
-                - sh
-                - -lc
-                - "mariadb-admin ping -uroot -p$MYSQL_ROOT_PASSWORD"
-            initialDelaySeconds: 20
-            periodSeconds: 5
-            timeoutSeconds: 3
-            failureThreshold: 6
-
-          livenessProbe:
-            exec:
-              command:
-                - sh
-                - -lc
-                - "mariadb-admin ping -uroot -p$MYSQL_ROOT_PASSWORD"
-            initialDelaySeconds: 60
-            periodSeconds: 10
-            timeoutSeconds: 3
-            failureThreshold: 6
-
+              cpu: "1000m"
+              memory: "1536Mi"
       volumes:
         - name: data
           persistentVolumeClaim:
