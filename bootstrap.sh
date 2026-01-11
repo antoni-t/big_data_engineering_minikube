@@ -261,7 +261,7 @@ cd "${SCRIPT_DIR}"
 
 
 ######################################################################
-# 12. MLflow PVC + Training Job ausführen (RUN_ID erzeugen)
+# 12 a) MLflow PVC + Training Job ausführen (RUN_ID erzeugen)
 ######################################################################
 echo "Deploye MLflow PVC + starte Training Job..."
 
@@ -278,8 +278,15 @@ kubectl wait --for=condition=complete job/ml-train -n default --timeout=900s || 
   exit 1
 }
 
-echo "Training Job completed."
+echo "Training Job completed. Deleting job + pods to free resources..."
 
+######################################################################
+# 12 b) Kill Training-Jobs
+######################################################################
+
+kubectl -n default delete job ml-train --cascade=foreground --wait=true
+#--cascade=foreground sorgt dafür, dass erst die Pods gelöscht werden und danach der Job.
+#--wait=true blockt bis das durch ist (bootstrap.sh läuft eh synchron).
 
 ######################################################################
 # 13. jupyter-consumer deployen (startet erst wenn RUN_ID file da ist)
