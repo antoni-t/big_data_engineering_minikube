@@ -17,10 +17,10 @@ spec:
           resources:
             requests:
               cpu: "1000m"
-              memory: "3Gi"
+              memory: "4Gi"
             limits:
               cpu: "2000m"
-              memory: "7Gi"
+              memory: "8Gi"
           env:
             - name: MLFLOW_TRACKING_URI
               value: "file:/mlruns"
