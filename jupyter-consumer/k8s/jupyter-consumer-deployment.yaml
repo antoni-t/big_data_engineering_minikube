@@ -43,10 +43,10 @@ spec:
 
           resources:
             requests:
-              cpu: "200m"
+              cpu: "100m"
               memory: "2Gi"
             limits:
-              cpu: "1000m"
+              cpu: "500m"
               memory: "3Gi"
 
           volumeMounts:

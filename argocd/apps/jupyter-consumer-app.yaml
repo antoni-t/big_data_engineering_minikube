@@ -4,6 +4,12 @@ metadata:
   name: jupyter-consumer
   namespace: argocd
 spec:
+  ignoreDifferences:
+  - group: apps
+    kind: Deployment
+    name: jupyter-consumer
+    jsonPointers:
+    - /spec/replicas
   project: default
   source:
     repoURL: https://github.com/antoni-t/big_data_engineering_minikube.git
@@ -16,3 +22,4 @@ spec:
     automated:
       prune: true
       selfHeal: true
+
