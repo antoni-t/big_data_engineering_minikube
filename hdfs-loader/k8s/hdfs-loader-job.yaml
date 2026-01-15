@@ -36,7 +36,7 @@ spec:
             - name: HDFS_WEBHDFS_URL
               value: "http://hdfs-namenode.default.svc.cluster.local:9870/webhdfs/v1"
             - name: HDFS_USER
-              value: "hdfs"
+              value: "root"
             - name: DATA_ROOT
               value: "/repo/data"
             - name: HDFS_AUTOBAHN_ROOT
