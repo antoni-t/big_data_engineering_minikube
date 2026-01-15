@@ -38,7 +38,7 @@ spec:
             - name: HDFS_USER
               value: "hdfs"
             - name: DATA_ROOT
-              value: "/repo/Data"
+              value: "/repo/data"
             - name: HDFS_AUTOBAHN_ROOT
               value: "/datalake/autobahn"
             - name: HDFS_WEATHER_ROOT
