@@ -162,6 +162,7 @@ kubectl rollout status deploy/mariadb -n default --timeout=300s
 ######################################################################
 echo "Deploye HDFS (NameNode/DataNode) ..."
 
+kubectl apply -f "${HDFS_DIR}/k8s/hdfs-pvc.yaml"
 kubectl apply -f "${HDFS_DIR}/k8s/hdfs-services.yaml"
 kubectl apply -f "${HDFS_DIR}/k8s/hdfs-namenode.yaml"
 kubectl apply -f "${HDFS_DIR}/k8s/hdfs-datanode.yaml"
