@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hdfs-namenode
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hdfs-namenode
+  template:
+    metadata:
+      labels:
+        app: hdfs-namenode
+    spec:
+      containers:
+        - name: namenode
+          image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: CLUSTER_NAME
+              value: "minikube-hdfs"
+            - name: CORE_CONF_fs_defaultFS
+              value: "hdfs://hdfs-namenode:8020"
+            - name: HDFS_CONF_dfs_webhdfs_enabled
+              value: "true"
+            - name: HDFS_CONF_dfs_replication
+              value: "1"
+          ports:
+            - containerPort: 9870
+            - containerPort: 8020
+          volumeMounts:
+            - name: nn-data
+              mountPath: /hadoop/dfs/name
+      volumes:
+        - name: nn-data
+          persistentVolumeClaim:
+            claimName: hdfs-namenode-pvc

@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hdfs-datanode
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hdfs-datanode
+  template:
+    metadata:
+      labels:
+        app: hdfs-datanode
+    spec:
+      containers:
+        - name: datanode
+          image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: CORE_CONF_fs_defaultFS
+              value: "hdfs://hdfs-namenode:8020"
+            - name: HDFS_CONF_dfs_webhdfs_enabled
+              value: "true"
+            - name: HDFS_CONF_dfs_replication
+              value: "1"
+          ports:
+            - containerPort: 9864
+          volumeMounts:
+            - name: dn-data
+              mountPath: /hadoop/dfs/data
+      volumes:
+        - name: dn-data
+          persistentVolumeClaim:
+            claimName: hdfs-datanode-pvc

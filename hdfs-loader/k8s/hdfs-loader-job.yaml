@@ -1,0 +1,48 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: hdfs-initial-load
+  namespace: default
+spec:
+  backoffLimit: 1
+  template:
+    spec:
+      restartPolicy: Never
+      volumes:
+        - name: repo
+          emptyDir: {}
+
+      initContainers:
+        - name: clone-repo
+          image: alpine/git:2.45.2
+          imagePullPolicy: IfNotPresent
+          args:
+            - clone
+            - --depth
+            - "1"
+            - --branch
+            - "main"
+            - "https://github.com/antoni-t/big_data_engineering_minikube.git"
+            - /repo
+          volumeMounts:
+            - name: repo
+              mountPath: /repo
+
+      containers:
+        - name: uploader
+          image: hdfs-loader:latest
+          imagePullPolicy: Never
+          env:
+            - name: HDFS_WEBHDFS_URL
+              value: "http://hdfs-namenode.default.svc.cluster.local:9870/webhdfs/v1"
+            - name: HDFS_USER
+              value: "hdfs"
+            - name: DATA_ROOT
+              value: "/repo/Data"
+            - name: HDFS_AUTOBAHN_ROOT
+              value: "/datalake/autobahn"
+            - name: HDFS_WEATHER_ROOT
+              value: "/datalake/weather_hist"
+          volumeMounts:
+            - name: repo
+              mountPath: /repo

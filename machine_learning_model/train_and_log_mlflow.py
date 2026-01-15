@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 import os
 import sys
-from pathlib import Path
+import json
+import gzip
+import urllib.parse
+from io import BytesIO
+from pathlib import Path, PurePosixPath
+
 import pandas as pd
 import numpy as np
+import requests
 
 from datetime import datetime
 from sklearn.model_selection import train_test_split
@@ -13,50 +19,145 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import mlflow
 import mlflow.sklearn
 
-AUTOBAHN_DIR = Path(os.getenv("AUTOBAHN_DIR", "/autobahn_data"))
-WEATHER_DIR  = Path(os.getenv("WEATHER_DIR", "/weather_hist")) 
-GRID_FILE    = Path(os.getenv("GRID_FILE", "/app/de_grid_sym_400.csv"))
+# -----------------------------------------------------------------------------
+# Configuration
+# -----------------------------------------------------------------------------
+# WebHDFS base (must include /webhdfs/v1, like: http://hdfs-namenode:9870/webhdfs/v1)
+HDFS_WEBHDFS_URL = os.getenv("HDFS_WEBHDFS_URL", "").rstrip("/")
+HDFS_USER = os.getenv("HDFS_USER", "hdfs")
+
+# HDFS data roots
+HDFS_AUTOBAHN_DIR = os.getenv("HDFS_AUTOBAHN_DIR", "/datalake/autobahn")
+HDFS_WEATHER_DIR  = os.getenv("HDFS_WEATHER_DIR", "/datalake/weather_hist")
+
+# local grid file inside container image
+GRID_FILE = Path(os.getenv("GRID_FILE", "/app/de_grid_sym_400.csv"))
 
 MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "file:/mlruns")
 LATEST_RUN_ID_FILE  = Path(os.getenv("LATEST_RUN_ID_FILE", "/mlruns/LATEST_RUN_ID"))
 
-# -----------------------------
-# Helpers
-# -----------------------------
+# Performance / safety knobs
+# - Limit how many files we load to avoid OOM in small clusters
+MAX_AUTOBAHN_FILES = int(os.getenv("MAX_AUTOBAHN_FILES", "0"))  # 0 = no limit
+MAX_WEATHER_FILES  = int(os.getenv("MAX_WEATHER_FILES", "0"))   # 0 = no limit
 
-def list_jsonl_gz_by_structure(root: Path) -> list[Path]:
-    # erwartet: root/YYYY/MM/DD/HH/*.jsonl.gz
-    files: list[Path] = []
-    for year_dir in sorted(root.glob("[0-9][0-9][0-9][0-9]")):
-        if not year_dir.is_dir():
-            continue
-        for month_dir in sorted(year_dir.glob("[0-9][0-9]")):
-            if not month_dir.is_dir():
-                continue
-            for day_dir in sorted(month_dir.glob("[0-9][0-9]")):
-                if not day_dir.is_dir():
-                    continue
-                for hour_dir in sorted(day_dir.glob("[0-9][0-9]")):
-                    if not hour_dir.is_dir():
-                        continue
-                    files.extend(sorted(hour_dir.glob("*.jsonl.gz")))
+# - Optional row downsampling after load (0..1); 1.0 means keep all
+AUTOBAHN_SAMPLE_FRAC = float(os.getenv("AUTOBAHN_SAMPLE_FRAC", "1.0"))
+WEATHER_SAMPLE_FRAC  = float(os.getenv("WEATHER_SAMPLE_FRAC", "1.0"))
+
+# - Requests timeouts
+HTTP_TIMEOUT_S = int(os.getenv("HTTP_TIMEOUT_S", "60"))
+HTTP_STREAM_TIMEOUT_S = int(os.getenv("HTTP_STREAM_TIMEOUT_S", "300"))
+
+# -----------------------------------------------------------------------------
+# WebHDFS helpers
+# -----------------------------------------------------------------------------
+def _webhdfs_url(hdfs_path: str, op: str, **params) -> str:
+    """
+    Build a WebHDFS URL.
+    hdfs_path must start with "/" (e.g. "/datalake/autobahn")
+    """
+    if not hdfs_path.startswith("/"):
+        hdfs_path = "/" + hdfs_path
+    qp = {"op": op, "user.name": HDFS_USER}
+    qp.update(params)
+    return f"{HDFS_WEBHDFS_URL}{hdfs_path}?{urllib.parse.urlencode(qp)}"
+
+
+def _require_hdfs_config():
+    if not HDFS_WEBHDFS_URL:
+        raise RuntimeError(
+            "HDFS_WEBHDFS_URL is not set. Example:\n"
+            "  http://hdfs-namenode.default.svc.cluster.local:9870/webhdfs/v1"
+        )
+
+
+def hdfs_list_recursive(root_dir: str) -> list[str]:
+    """
+    Recursively list all files under root_dir (HDFS path).
+    Returns a list of absolute HDFS paths.
+    """
+    _require_hdfs_config()
+    out: list[str] = []
+    stack = [root_dir]
+
+    while stack:
+        d = stack.pop()
+        r = requests.get(_webhdfs_url(d, "LISTSTATUS"), timeout=HTTP_TIMEOUT_S)
+        r.raise_for_status()
+        statuses = r.json().get("FileStatuses", {}).get("FileStatus", [])
+
+        for s in statuses:
+            suffix = s.get("pathSuffix", "")
+            p = str(PurePosixPath(d) / suffix) if suffix else d
+            if s.get("type") == "DIRECTORY":
+                stack.append(p)
+            else:
+                out.append(p)
+
+    return out
+
+
+def hdfs_open_stream(hdfs_file: str):
+    """
+    Open HDFS file via WebHDFS OPEN as a streamed response.
+    """
+    _require_hdfs_config()
+    r = requests.get(_webhdfs_url(hdfs_file, "OPEN"), stream=True, timeout=HTTP_STREAM_TIMEOUT_S)
+    r.raise_for_status()
+    return r
+
+
+# -----------------------------------------------------------------------------
+# Data loading (HDFS -> pandas)
+# -----------------------------------------------------------------------------
+def list_jsonl_gz_by_structure_hdfs(root_dir: str) -> list[str]:
+    """
+    Expects HDFS structure: root/YYYY/MM/DD/HH/*.jsonl.gz
+    We list recursively and filter *.jsonl.gz
+    """
+    all_files = hdfs_list_recursive(root_dir)
+    files = [p for p in all_files if p.endswith(".jsonl.gz")]
+    files.sort()
     return files
 
-def load_jsonl_gz_structured(root: Path) -> pd.DataFrame:
-    files = list_jsonl_gz_by_structure(root)
+
+def load_jsonl_gz_structured_hdfs(root_dir: str, max_files: int = 0, sample_frac: float = 1.0) -> pd.DataFrame:
+    files = list_jsonl_gz_by_structure_hdfs(root_dir)
     if not files:
-        raise FileNotFoundError(f"No .jsonl.gz files found under: {root}")
+        raise FileNotFoundError(f"No .jsonl.gz files found under HDFS: {root_dir}")
+
+    if max_files and max_files > 0:
+        files = files[:max_files]
 
     out = []
-    for i, f in enumerate(files, 1):
-        df = pd.read_json(f, lines=True, compression="gzip")
+    for i, hdfs_file in enumerate(files, 1):
+        resp = hdfs_open_stream(hdfs_file)
+        # Pandas can read gzipped jsonl from bytes; easiest: read all, then decompress
+        raw = resp.content
+        try:
+            with gzip.GzipFile(fileobj=BytesIO(raw)) as gz:
+                df = pd.read_json(gz, lines=True)
+        except Exception as e:
+            raise RuntimeError(f"Failed to read {hdfs_file} as .jsonl.gz: {e}") from e
+
         out.append(df)
+
         if i % 50 == 0:
             rows = sum(len(x) for x in out)
             print(f"loaded {i}/{len(files)} files; current rows={rows}")
 
-    return pd.concat(out, ignore_index=True)
+    merged = pd.concat(out, ignore_index=True)
 
+    if 0.0 < sample_frac < 1.0 and len(merged) > 0:
+        merged = merged.sample(frac=sample_frac, random_state=42).reset_index(drop=True)
+
+    return merged
+
+
+# -----------------------------------------------------------------------------
+# Feature engineering (unchanged logic)
+# -----------------------------------------------------------------------------
 def build_events_from_autobahn(autobahn_raw: pd.DataFrame) -> pd.DataFrame:
     df = autobahn_raw.dropna(subset=["payload"]).copy()
     df["warnings"] = df["payload"].apply(lambda x: x.get("warning", []) if isinstance(x, dict) else [])
@@ -92,6 +193,7 @@ def build_events_from_autobahn(autobahn_raw: pd.DataFrame) -> pd.DataFrame:
         events["label"] = 0
 
     return events
+
 
 def map_events_to_cells(events: pd.DataFrame, grid_points_csv: Path) -> pd.DataFrame:
     pts = pd.read_csv(grid_points_csv)  # id,row,col,lat,lon (corner points)
@@ -135,17 +237,29 @@ def map_events_to_cells(events: pd.DataFrame, grid_points_csv: Path) -> pd.DataF
     )
     return grid_hour_agg
 
+
+# -----------------------------------------------------------------------------
+# Main
+# -----------------------------------------------------------------------------
 def main():
     print("=== TRAINING JOB START ===")
-    print("AUTOBAHN_DIR:", AUTOBAHN_DIR)
+    print("HDFS_WEBHDFS_URL:", HDFS_WEBHDFS_URL)
+    print("HDFS_AUTOBAHN_DIR:", HDFS_AUTOBAHN_DIR)
+    print("HDFS_WEATHER_DIR:", HDFS_WEATHER_DIR)
     print("GRID_FILE:", GRID_FILE)
     print("MLFLOW_TRACKING_URI:", MLFLOW_TRACKING_URI)
+
+    _require_hdfs_config()
 
     mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
     mlflow.set_experiment("autobahn_event_forecast_rf")
 
-    # 1) Autobahn laden (gemountet)
-    autobahn_raw = load_jsonl_gz_structured(AUTOBAHN_DIR)
+    # 1) Autobahn laden (HDFS)
+    autobahn_raw = load_jsonl_gz_structured_hdfs(
+        HDFS_AUTOBAHN_DIR,
+        max_files=MAX_AUTOBAHN_FILES,
+        sample_frac=AUTOBAHN_SAMPLE_FRAC,
+    )
     print("autobahn_raw shape:", autobahn_raw.shape)
 
     # 2) Events -> cell-hour Aggregation
@@ -155,27 +269,21 @@ def main():
     print("grid_hour_agg shape:", grid_hour_agg.shape)
     print("time range:", grid_hour_agg["event_hour"].min(), "->", grid_hour_agg["event_hour"].max())
 
-    # 3) Historische Wetterdaten:
-    #    Du wolltest sie im Training-Pod über API abfragen.
-    #    Damit das jetzt erstmal “läuft”, gehen wir pragmatisch vor:
-    #    -> Falls du Weather noch nicht im Pod erzeugst, kannst du WEATHER_DIR mounten.
-    #    -> Oder du ergänzt später hier den Open-Meteo Archive-Call (du hattest bereits ein gutes Script).
-    if WEATHER_DIR.exists() and list(WEATHER_DIR.rglob("*.jsonl.gz")):
-        weather = load_jsonl_gz_structured(WEATHER_DIR)
-        # weather columns expected: time,id,row,col,temperature_2m,rain,snowfall,relative_humidity_2m...
-        if "time" in weather.columns:
-            weather["time"] = pd.to_datetime(weather["time"], utc=True, errors="coerce")
-        print("weather shape:", weather.shape)
-    else:
-        raise RuntimeError(
-            f"No historical weather found at {WEATHER_DIR}. "
-            "For now: mount your local historical weather folder to /weather_hist. "
-            "Next step: integrate archive API fetch inside this job."
-        )
+    # 3) Historische Wetterdaten aus HDFS
+    weather = load_jsonl_gz_structured_hdfs(
+        HDFS_WEATHER_DIR,
+        max_files=MAX_WEATHER_FILES,
+        sample_frac=WEATHER_SAMPLE_FRAC,
+    )
+
+    # expected: time,id,row,col,temperature_2m,rain,snowfall,relative_humidity_2m...
+    if "time" in weather.columns:
+        weather["time"] = pd.to_datetime(weather["time"], utc=True, errors="coerce")
+    print("weather shape:", weather.shape)
 
     # 4) Merge weather (by hour+cell) with labels
-    #    weather uses id=time cell_id? (dein Format: id + time)
-    #    Wir brauchen cell_id: aus row/col bauen falls nicht vorhanden
+    # weather uses id=time cell_id? (Format: id + time)
+    # ensure cell id exists
     if "id" not in weather.columns and ("row" in weather.columns and "col" in weather.columns):
         weather["id"] = "cell_" + weather["row"].astype(int).astype(str) + "_" + weather["col"].astype(int).astype(str)
 
@@ -187,8 +295,7 @@ def main():
         how="left"
     )
 
-    # --- ensure row/col exist after merge (handle suffixes) ---
-    # pandas adds suffixes when both sides have same column names
+    # ensure row/col exist after merge (handle suffixes)
     if "row" not in merged.columns or "col" not in merged.columns:
         # Prefer weather side if present
         if "row_x" in merged.columns and "col_x" in merged.columns:
@@ -200,31 +307,28 @@ def main():
             merged["col"] = merged["col_y"]
 
     # If still missing, derive from id like "cell_<row>_<col>"
-    if "row" not in merged.columns or "col" not in merged.columns:
-        if "id" in merged.columns:
-            rc = merged["id"].astype(str).str.extract(r"cell_(\d+)_(\d+)")
-            merged["row"] = pd.to_numeric(rc[0], errors="coerce")
-            merged["col"] = pd.to_numeric(rc[1], errors="coerce")
+    if ("row" not in merged.columns or "col" not in merged.columns) and ("id" in merged.columns):
+        rc = merged["id"].astype(str).str.extract(r"cell_(\d+)_(\d+)")
+        merged["row"] = pd.to_numeric(rc[0], errors="coerce")
+        merged["col"] = pd.to_numeric(rc[1], errors="coerce")
 
-    # finally enforce numeric
     merged["row"] = pd.to_numeric(merged["row"], errors="coerce")
     merged["col"] = pd.to_numeric(merged["col"], errors="coerce")
 
     # Fill Autobahn columns
-    EVENT_COLS = ["event_count","congested_count","label","avg_speed_min","avg_speed_mean"]
+    EVENT_COLS = ["event_count", "congested_count", "label", "avg_speed_min", "avg_speed_mean"]
     for col in EVENT_COLS:
         if col in merged.columns:
             merged[col] = merged[col].fillna(0)
 
     merged["event_count"] = merged["event_count"].astype(int)
 
-    #folgende zwei prints sind für debugging
+    # Debug prints
     print("merged columns:", sorted(list(merged.columns))[:60])
-    print("row/col preview:", merged[["id","row","col"]].head(3))
-
+    print("row/col preview:", merged[["id", "row", "col"]].head(3))
 
     # 5) Train RF
-    feature_cols = ["temperature_2m","relative_humidity_2m","rain","snowfall","row","col"]
+    feature_cols = ["temperature_2m", "relative_humidity_2m", "rain", "snowfall", "row", "col"]
     merged = merged.dropna(subset=feature_cols + ["event_count"]).copy()
 
     X = merged[feature_cols].astype(float)
@@ -246,8 +350,10 @@ def main():
     rmse = np.sqrt(mean_squared_error(y_test, pred))
     r2 = r2_score(y_test, pred)
 
-    fi = pd.DataFrame({"feature": feature_cols, "importance": reg.feature_importances_}) \
-           .sort_values("importance", ascending=False)
+    fi = (
+        pd.DataFrame({"feature": feature_cols, "importance": reg.feature_importances_})
+          .sort_values("importance", ascending=False)
+    )
 
     # 6) Log to MLflow and write RUN_ID file
     with mlflow.start_run(run_name="rf_event_count_regression") as run:
@@ -259,12 +365,6 @@ def main():
             "features": ",".join(feature_cols)
         })
         mlflow.log_metrics({"MAE": mae, "RMSE": rmse, "R2": r2})
-
-        #mlflow.sklearn.log_model(
-        #    sk_model=reg,
-        #    name="model",
-        #    input_example=X_train.head(5)
-        #)
 
         mlflow.sklearn.log_model(
             sk_model=reg,
@@ -285,6 +385,7 @@ def main():
 
     print("=== TRAINING JOB DONE ===")
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())

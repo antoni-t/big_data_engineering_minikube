@@ -29,6 +29,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PRODUCER_DIR="${SCRIPT_DIR}/weather-producer"
 SCRAPER_DIR="${SCRIPT_DIR}/scraper"
 MACHINE_LEARNING_DIR="${SCRIPT_DIR}/machine_learning_model"
+HDFS_DIR="${SCRIPT_DIR}/hdfs"
+HDFS_LOADER_DIR="${SCRIPT_DIR}/hdfs-loader"
 
 # Lokale Trainingsdaten (Windows) -> in Minikube mounten
 #AUTOBAHN_LOCAL_DIR="${AUTOBAHN_LOCAL_DIR:-C:/Users/thoma/DHBW_master_semester_3/big_data_engineering/Gruppen-Projekt/ML_training_final/Alle-Autobahn-Daten/autobahn}"
@@ -70,11 +72,7 @@ fi
 echo "Setze Docker-Umgebung auf Minikube…"
 eval "$(minikube docker-env)"
 
-echo "Mounts werden NICHT mehr vom bootstrap.sh gestartet."
-echo "Bitte stelle sicher, dass die beiden minikube mount Terminals noch laufen."
-echo "Erwartete Mount-Ziele in Minikube:"
-echo "  /mnt/autobahn_data"
-echo "  /mnt/weather_hist"
+echo "Historische Daten werden aus dem GitHub Repo in HDFS geladen."
 
 ######################################################################
 # 2. Sinnvolle Addons aktivieren (metrics-server, ingress)
@@ -158,6 +156,43 @@ echo "Kafka-Bootstrap-Address (intern): my-cluster-kafka-bootstrap.kafka.svc:909
 echo "Deploye MariaDB..."
 kubectl apply -f "${SCRIPT_DIR}/mariadb/k8s/mariadb.yaml"
 kubectl rollout status deploy/mariadb -n default --timeout=300s
+
+######################################################################
+# 7b. HDFS deployen + Initialdaten aus GitHub nach HDFS laden
+######################################################################
+echo "Deploye HDFS (NameNode/DataNode) ..."
+
+kubectl apply -f "${HDFS_DIR}/k8s/hdfs-services.yaml"
+kubectl apply -f "${HDFS_DIR}/k8s/hdfs-namenode.yaml"
+kubectl apply -f "${HDFS_DIR}/k8s/hdfs-datanode.yaml"
+
+echo "Warte bis HDFS NameNode & DataNode ready sind..."
+kubectl rollout status deployment/hdfs-namenode -n default --timeout=600s
+kubectl rollout status deployment/hdfs-datanode -n default --timeout=600s
+
+echo "Baue lokales Docker-Image 'hdfs-loader:latest' ..."
+if [ ! -d "${HDFS_LOADER_DIR}/uploader" ]; then
+  echo "FEHLER: Verzeichnis ${HDFS_LOADER_DIR}/uploader existiert nicht."
+  exit 1
+fi
+docker build -t hdfs-loader:latest "${HDFS_LOADER_DIR}/uploader"
+
+echo "Starte Job: hdfs-initial-load (GitHub Data -> HDFS) ..."
+
+kubectl delete job hdfs-initial-load -n default >/dev/null 2>&1 || true
+kubectl apply -f "${HDFS_LOADER_DIR}/k8s/hdfs-loader-job.yaml"
+
+echo "Warte auf Abschluss des HDFS Loader Jobs..."
+kubectl wait --for=condition=complete job/hdfs-initial-load -n default --timeout=5000s || {
+  echo "HDFS LOADER JOB FAILED. Logs:"
+  kubectl logs -n default job/hdfs-initial-load --tail=200 || true
+  exit 1
+}
+
+echo "HDFS Loader Job completed. Lösche Job + Pods..."
+kubectl -n default delete job hdfs-initial-load --cascade=foreground --wait=true
+
+
 
 ######################################################################
 # 8. Docker-Image für Machine Learning Model (Jupyter) bauen
@@ -368,8 +403,12 @@ spec:
               image: scraper:latest
               imagePullPolicy: Never
               env:
-                - name: SCRAPER_DATA_DIR
-                  value: "/data"
+                - name: HDFS_WEBHDFS_URL
+                  value: "http://hdfs-namenode.default.svc.cluster.local:9870/webhdfs/v1"
+                - name: HDFS_USER
+                  value: "hdfs"
+                - name: HDFS_BASEDIR
+                  value: "/datalake/scraper/autobahn"
               command: ["python", "autobahn_scraper.py"]
               volumeMounts:
                 - name: scraper-data
@@ -398,8 +437,12 @@ spec:
               image: scraper:latest
               imagePullPolicy: Never
               env:
-                - name: SCRAPER_DATA_DIR
-                  value: "/data"
+                - name: HDFS_WEBHDFS_URL
+                  value: "http://hdfs-namenode.default.svc.cluster.local:9870/webhdfs/v1"
+                - name: HDFS_USER
+                  value: "hdfs"
+                - name: HDFS_BASEDIR
+                  value: "/datalake/scraper/weather"
               command: ["python", "wetter_scraper.py"]
               volumeMounts:
                 - name: scraper-data

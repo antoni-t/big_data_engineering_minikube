@@ -22,34 +22,15 @@ spec:
               cpu: "2000m"
               memory: "9Gi"
           env:
-            - name: MLFLOW_TRACKING_URI
-              value: "file:/mlruns"
-            - name: LATEST_RUN_ID_FILE
-              value: "/mlruns/LATEST_RUN_ID"
-            - name: AUTOBAHN_DIR
-              value: "/mnt/autobahn_data"
-            - name: WEATHER_DIR
-              value: "/mnt/weather_hist"
-            - name: GRID_FILE
-              value: "/app/de_grid_sym_400.csv"
-          volumeMounts:
-            - name: mlflow-artifacts
-              mountPath: /mlruns
-            - name: autobahn-hist
-              mountPath: /mnt/autobahn_data
-              readOnly: true
-            - name: weather-hist
-              mountPath: /mnt/weather_hist
-              readOnly: true
+            - name: HDFS_WEBHDFS_URL
+              value: "http://hdfs-namenode.default.svc.cluster.local:9870/webhdfs/v1"
+            - name: HDFS_USER
+              value: "hdfs"
+            - name: HDFS_AUTOBAHN_DIR
+              value: "/datalake/autobahn"
+            - name: HDFS_WEATHER_DIR
+              value: "/datalake/weather_hist"
       volumes:
         - name: mlflow-artifacts
           persistentVolumeClaim:
             claimName: mlflow-artifacts-pvc
-        - name: autobahn-hist
-          hostPath:
-            path: /mnt/autobahn_data
-            type: Directory
-        - name: weather-hist
-          hostPath:
-            path: /mnt/weather_hist
-            type: Directory

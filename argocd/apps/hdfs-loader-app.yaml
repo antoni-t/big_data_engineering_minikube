@@ -1,0 +1,21 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+  name: hdfs-loader
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/antoni-t/big_data_engineering_minikube.git
+    targetRevision: main
+    path: hdfs-loader/k8s
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
