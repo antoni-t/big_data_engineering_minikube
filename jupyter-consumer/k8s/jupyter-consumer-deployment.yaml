@@ -12,8 +12,6 @@ spec:
     metadata:
       labels:
         app: jupyter-consumer
-      annotations:
-        demo.argocd/change: "2026-01-16T19:45:00Z"
     spec:
       containers:
         - name: jupyter-consumer
