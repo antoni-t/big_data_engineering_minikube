@@ -30,6 +30,8 @@ spec:
               value: "/datalake/autobahn"
             - name: HDFS_WEATHER_DIR
               value: "/datalake/weather_hist"
+            - name: HDFS_DATANODE_SERVICE
+              value: "hdfs-datanode.default.svc.cluster.local:9864"
       volumes:
         - name: mlflow-artifacts
           persistentVolumeClaim:

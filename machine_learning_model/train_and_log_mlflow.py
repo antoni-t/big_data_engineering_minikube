@@ -7,6 +7,8 @@ import urllib.parse
 from io import BytesIO
 from pathlib import Path, PurePosixPath
 
+import urllib.parse
+
 import pandas as pd
 import numpy as np
 import requests
@@ -98,14 +100,46 @@ def hdfs_list_recursive(root_dir: str) -> list[str]:
     return out
 
 
+
+HDFS_DATANODE_SERVICE = os.getenv("HDFS_DATANODE_SERVICE", "hdfs-datanode.default.svc.cluster.local:9864")
+
+def _rewrite_datanode_location(loc: str) -> str:
+    """
+    WebHDFS redirects OPEN/CREATE to a DataNode URL, often with host=<podname>.
+    Pod hostnames are not resolvable in this cluster -> rewrite host to the DataNode Service.
+    """
+    u = urllib.parse.urlparse(loc)
+
+    # keep scheme; force netloc to the service
+    # (netloc includes host:port)
+    new_u = u._replace(netloc=HDFS_DATANODE_SERVICE)
+    return urllib.parse.urlunparse(new_u)
+
 def hdfs_open_stream(hdfs_file: str):
-    """
-    Open HDFS file via WebHDFS OPEN as a streamed response.
-    """
-    _require_hdfs_config()
-    r = requests.get(_webhdfs_url(hdfs_file, "OPEN"), stream=True, timeout=HTTP_STREAM_TIMEOUT_S)
-    r.raise_for_status()
-    return r
+    # Step 1: ask NameNode for OPEN, but do NOT follow redirect
+    r1 = requests.get(
+        _webhdfs_url(hdfs_file, "OPEN"),
+        allow_redirects=False,
+        stream=True,
+        timeout=60,
+    )
+
+    # NameNode typically responds 307 with Location to DataNode
+    if r1.status_code in (307, 302):
+        loc = r1.headers.get("Location")
+        if not loc:
+            raise RuntimeError("WebHDFS OPEN redirect without Location header")
+
+        loc2 = _rewrite_datanode_location(loc)
+
+        # Step 2: stream from DataNode service
+        r2 = requests.get(loc2, stream=True, timeout=HTTP_STREAM_TIMEOUT_S)
+        r2.raise_for_status()
+        return r2
+
+    # Some setups may directly return 200
+    r1.raise_for_status()
+    return r1
 
 
 # -----------------------------------------------------------------------------
