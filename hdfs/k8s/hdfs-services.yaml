@@ -8,8 +8,8 @@ spec:
     app: hdfs-namenode
   ports:
     - name: webhdfs
-      port: 9870
-      targetPort: 9870
+      port: 9864
+      targetPort: 9864
     - name: rpc
       port: 8020
       targetPort: 8020
