@@ -32,6 +32,13 @@ spec:
               value: "/datalake/weather_hist"
             - name: HDFS_DATANODE_SERVICE
               value: "hdfs-datanode.default.svc.cluster.local:9864"
+            - name: MLFLOW_TRACKING_URI
+              value: "file:/mlruns"   # optional, aber gut explizit
+
+          volumeMounts:
+            - name: mlflow-artifacts
+              mountPath: /mlruns
+
       volumes:
         - name: mlflow-artifacts
           persistentVolumeClaim:
