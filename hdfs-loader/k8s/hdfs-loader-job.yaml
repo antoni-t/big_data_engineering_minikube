@@ -43,6 +43,8 @@ spec:
               value: "/datalake/autobahn"
             - name: HDFS_WEATHER_ROOT
               value: "/datalake/weather_hist"
+            - name: HDFS_DATANODE_SERVICE
+              value: "hdfs-datanode.default.svc.cluster.local"
           volumeMounts:
             - name: repo
               mountPath: /repo
