@@ -80,7 +80,6 @@ HOURLY_VARIABLES = [
 ]
 
 MAX_REQUESTS_PER_DAY = int(os.getenv("MAX_REQUESTS_PER_DAY", "9000"))
-REQUEST_INTERVAL_SEC = float(os.getenv("REQUEST_INTERVAL_SEC", "1.5"))
 
 # ============================================
 # Open-Meteo Client mit Cache & Retry
@@ -277,8 +276,6 @@ def run_once():
             for v_name, arr in zip(HOURLY_VARIABLES, arrays):
                 rec[v_name] = float(arr[t_idx])
             all_records.append(rec)
-
-        time.sleep(REQUEST_INTERVAL_SEC)
 
     print(f"Gesamtanzahl Records: {len(all_records)}")
     print(f"Anzahl Requests in diesem Lauf: {requests_made}")
