@@ -473,7 +473,7 @@ spec:
                 - name: HDFS_WEBHDFS_URL
                   value: "http://hdfs-namenode.default.svc.cluster.local:9870/webhdfs/v1"
                 - name: HDFS_USER
-                  value: "hdfs"
+                  value: "root"
                 - name: HDFS_DATANODE_SERVICE
                   value: "hdfs-datanode.default.svc.cluster.local:9864"
                 - name: HDFS_AUTOBAHN_DIR
@@ -509,7 +509,7 @@ spec:
                 - name: HDFS_WEBHDFS_URL
                   value: "http://hdfs-namenode.default.svc.cluster.local:9870/webhdfs/v1"
                 - name: HDFS_USER
-                  value: "hdfs"
+                  value: "root"
                 - name: HDFS_DATANODE_SERVICE
                   value: "hdfs-datanode.default.svc.cluster.local:9864"
                 - name: HDFS_WEATHER_DIR

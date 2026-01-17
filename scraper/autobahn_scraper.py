@@ -57,6 +57,11 @@ HDFS_USER = os.getenv("HDFS_USER", "hdfs")
 # Ergebnis: /datalake/bronze/autobahn/YYYY/MM/DD/HH/autobahn_warning_<ts>.jsonl.gz
 HDFS_AUTOBAHN_DIR = os.getenv("HDFS_AUTOBAHN_DIR", "/datalake/bronze/autobahn")
 
+HDFS_DATANODE_SERVICE = os.getenv(
+    "HDFS_DATANODE_SERVICE",
+    "hdfs-datanode.default.svc.cluster.local:9864"
+)
+
 # Optional: lokales Fallback (nur wenn HDFS nicht gesetzt ist)
 SCRAPER_DATA_DIR = os.environ.get("SCRAPER_DATA_DIR", "/data")
 LOCAL_DATA_ROOT = os.path.join(SCRAPER_DATA_DIR, "autobahn")
