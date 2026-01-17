@@ -19,8 +19,8 @@ from sqlalchemy import create_engine, text
 #
 # Zweck
 #   Dieser Service konsumiert Wetter-/Forecast-Events aus einem Kafka Topic,
-#   führt darauf ein bereits trainiertes MLflow/Sklearn-Modell zur Vorhersage
-#   von Ereignisanzahlen aus und schreibt die aggregierten/punktuellen
+#   wendet darauf ein bereits trainiertes MLflow/Sklearn-Modell zur Vorhersage
+#   von Ereignisanzahlen an und schreibt die aggregierten/punktuellen
 #   Vorhersagen als Upsert in eine MariaDB-Tabelle (forecast_predictions).
 #
 # Datenfluss (End-to-End)
@@ -49,6 +49,9 @@ from sqlalchemy import create_engine, text
 #   5) Persistenz (MariaDB)
 #      - Legt Zieltabelle forecast_predictions an, falls nicht vorhanden
 #      - Upsert pro (hour, row, col) via ON DUPLICATE KEY UPDATE
+#      - Dadurch wird verhindert, dass der Datenbestand in der Tabelle wächst. 
+#        Es wird für jede Rasterzelle (col und row) nur einen Eintrag pro Stunde geben.
+#        Drei Tage mit je 24 Stunden (72 Stunden).
 #      - Timestamp wird als naive UTC in MariaDB DATETIME geschrieben
 #
 # Betriebs-/Debug-Verhalten

@@ -25,7 +25,7 @@ import mlflow.sklearn
 # Training Job: Autobahn-Event-Prognose mit Wetterdaten (MLflow + HDFS)
 #
 # Zweck
-#   Dieses Skript trainiert ein Regressionsmodell zur Vorhersage der Anzahl
+#   Dieses Skript trainiert ein Random Forest-Regressionsmodell zur Vorhersage der Anzahl
 #   von Autobahnereignissen pro Rasterzelle und Stunde, indem historische
 #   Autobahn-Warnmeldungen mit korrespondierenden Wetterdaten kombiniert
 #   und das resultierende Modell samt Metriken in MLflow versioniert wird.

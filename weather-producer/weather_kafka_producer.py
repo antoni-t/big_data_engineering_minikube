@@ -18,8 +18,9 @@ from retry_requests import retry
 #   Dieser Service ruft regelmäßig stündliche 3-Tage-Wetterprognosen für ein
 #   fest definiertes räumliches Raster (Grid-Zellen) über die Open-Meteo-API ab
 #   und publiziert jede Prognosestunde als einzelnes Event in ein Kafka Topic.
-#   Für den Realbetrieb ohne Ratelimit würde die Abfrage in deutlich kürzeren 
-#   Abständen erfolgen.
+#   Aktuell limitierend ist, dass die API die nur stündlich aktualisiert. 
+#   Wenn diese regelmäßiger aktualisieren würde, 
+#   dann würde die Abfrage in deutlich kürzeren Abständen erfolgen.
 #
 # Funktionaler Ablauf
 #   1) Laden eines räumlichen Grids (row/col/lat/lon) aus einer CSV-Datei

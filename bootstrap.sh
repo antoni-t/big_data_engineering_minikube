@@ -38,7 +38,7 @@ set -euo pipefail
 #      - Startet Job: hdfs-initial-load (lädt historische Daten nach HDFS)
 #      - Wartet auf Job completion, gibt bei Fehlern Logs aus
 #
-#   7) Container-Images lokal bauen (für spätere Deployments)
+#   7) Container-Images bauen (für spätere Deployments)
 #      - machine-learning-model:latest
 #      - scraper:latest (Autobahn + Wetter)
 #      - jupyter-consumer:latest
@@ -48,9 +48,9 @@ set -euo pipefail
 #   8) MLOps: MLflow PVC + Training Job ausführen
 #      - Legt MLflow PVC an
 #      - Startet Job: ml-train
-#      - Wartet bis completion; löscht Job anschließend (selfHeal-Schutz)
+#      - Wartet bis completion; löscht Job anschließend (selfHeal-Schutz deaktiviert)
 #
-#   9) Serving / Processing Deployments
+#   9) Ingestion / Processing Deployments
 #      - Deploy: jupyter-consumer (+ HPA), wartet und liest RUN_ID aus PVC
 #      - Deploy: weather-producer (Kafka Producer Deployment)
 #      - Deploy: heatmap (Jupyter + Service) inkl. Rollout-Checks/Debug
@@ -195,7 +195,7 @@ kubectl wait kafka/my-cluster --for=condition=Ready --timeout=600s -n kafka || {
 }
 
 ######################################################################
-# 6. Kafka-Topic 'weather-raw' anlegen (für Producer)
+# 6. Kafka-Topic 'weather-raw' anlegen (für Weather Producer)
 ######################################################################
 echo "Erzeuge/aktualisiere KafkaTopic 'weather-raw'…"
 
@@ -262,7 +262,7 @@ kubectl -n default delete job hdfs-initial-load --cascade=foreground --wait=true
 
 
 ######################################################################
-# 8. Docker-Image für Machine Learning Model (Jupyter NB) bauen
+# 8. Docker-Image für Machine Learning Model bauen
 ######################################################################
 echo "Baue lokales Docker-Image 'machine-learning-model:latest' ..."
 
@@ -383,7 +383,7 @@ kubectl wait --for=condition=complete job/ml-train -n default --timeout=5000s ||
 echo "Training Job completed. Deleting job + pods to free resources..."
 
 ######################################################################
-# 12 b) Kill Training-Jobs (Läuft sonst ewig weiter durch selfheal)
+# 12 b) Kill Training-Jobs (Läuft sonst weiter und verbraucht Ressourcen)
 ######################################################################
 
 kubectl -n default delete job ml-train --cascade=foreground --wait=true
