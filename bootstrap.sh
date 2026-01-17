@@ -474,8 +474,10 @@ spec:
                   value: "http://hdfs-namenode.default.svc.cluster.local:9870/webhdfs/v1"
                 - name: HDFS_USER
                   value: "hdfs"
-                - name: HDFS_BASEDIR
-                  value: "/datalake/scraper/autobahn"
+                - name: HDFS_DATANODE_SERVICE
+                  value: "hdfs-datanode.default.svc.cluster.local:9864"
+                - name: HDFS_AUTOBAHN_DIR
+                  value: "/datalake/bronze/autobahn"
               command: ["python", "autobahn_scraper.py"]
               volumeMounts:
                 - name: scraper-data
@@ -508,8 +510,10 @@ spec:
                   value: "http://hdfs-namenode.default.svc.cluster.local:9870/webhdfs/v1"
                 - name: HDFS_USER
                   value: "hdfs"
-                - name: HDFS_BASEDIR
-                  value: "/datalake/scraper/weather"
+                - name: HDFS_DATANODE_SERVICE
+                  value: "hdfs-datanode.default.svc.cluster.local:9864"
+                - name: HDFS_WEATHER_DIR
+                  value: "/datalake/bronze/weather_hist"
               command: ["python", "wetter_scraper.py"]
               volumeMounts:
                 - name: scraper-data

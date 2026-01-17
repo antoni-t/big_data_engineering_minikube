@@ -6,7 +6,7 @@ import gzip
 import time
 from io import BytesIO
 from datetime import datetime, timezone
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse, urlunparse
 
 import requests
 
@@ -158,7 +158,8 @@ def hdfs_put_bytes(hdfs_file: str, data: bytes, overwrite: bool = True) -> None:
     if not loc:
         raise RuntimeError(f"WebHDFS CREATE redirect missing Location header for {hdfs_file}")
 
-    r2 = requests.put(loc, data=data, timeout=300)
+    loc2 = _rewrite_datanode_location(loc)
+    r2 = requests.put(loc2, data=data, timeout=300)
     r2.raise_for_status()
 
 def write_jsonl_gz_to_hdfs(hdfs_dir: str, filename: str, rows: list[dict]) -> str:
@@ -180,6 +181,11 @@ def write_jsonl_gz_local(local_dir: str, filename: str, rows: list[dict]) -> str
             gz.write(json.dumps(row, ensure_ascii=False))
             gz.write("\n")
     return out_file
+
+
+def _rewrite_datanode_location(loc: str) -> str:
+    u = urlparse(loc)
+    return urlunparse(u._replace(netloc=HDFS_DATANODE_SERVICE))
 
 # --------------------------------------------------------
 # Hauptlogik — einmalig Ausführen 

@@ -5,7 +5,7 @@ import gzip
 import json
 from io import BytesIO
 import datetime as dt
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse, urlunparse
 
 import pandas as pd
 import openmeteo_requests
@@ -59,6 +59,10 @@ CSV_PATH = os.path.join(APP_DIR, "de_grid_cell_centers.csv")
 HDFS_WEBHDFS_URL = os.getenv("HDFS_WEBHDFS_URL", "").rstrip("/")
 HDFS_USER = os.getenv("HDFS_USER", "hdfs")
 HDFS_WEATHER_DIR = os.getenv("HDFS_WEATHER_DIR", "/datalake/bronze/weather_hist")
+
+# HDFS Datanode service Variable
+HDFS_DATANODE_SERVICE = os.getenv("HDFS_DATANODE_SERVICE", "hdfs-datanode.default.svc.cluster.local:9864")
+
 
 # Optional lokales Fallback
 SCRAPER_DATA_DIR = os.environ.get("SCRAPER_DATA_DIR", "/data")
@@ -127,7 +131,9 @@ def hdfs_put_bytes(hdfs_file: str, data: bytes, overwrite: bool = True) -> None:
     if not loc:
         raise RuntimeError(f"WebHDFS CREATE redirect missing Location header for {hdfs_file}")
 
-    r2 = requests.put(loc, data=data, timeout=300)
+    loc2 = _rewrite_datanode_location(loc)
+    
+    r2 = requests.put(loc2, data=data, timeout=300)
     r2.raise_for_status()
 
 def hdfs_subdir_for(target_hour: dt.datetime) -> str:
@@ -139,6 +145,10 @@ def hdfs_subdir_for(target_hour: dt.datetime) -> str:
         f"{target_hour.day:02d}/"
         f"{target_hour.hour:02d}"
     )
+
+def _rewrite_datanode_location(loc: str) -> str:
+    u = urlparse(loc)
+    return urlunparse(u._replace(netloc=HDFS_DATANODE_SERVICE))
 
 # ============================================
 # Hilfsfunktionen
