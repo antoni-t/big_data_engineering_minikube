@@ -15,55 +15,58 @@ set -euo pipefail
 #   1) Prerequisites prüfen
 #      - Prüft Verfügbarkeit von: minikube, kubectl, helm
 #
-#   2) Minikube starten / verifizieren
+#       Minikube starten / verifizieren
 #      - Startet Minikube (Docker Driver, CPU/RAM), falls nicht aktiv
 #      - Setzt Docker-Environment auf Minikube (minikube docker-env)
 #
-#   3) Minikube Addons aktivieren
+#   2) Minikube Addons aktivieren
 #      - metrics-server
 #      - ingress
 #
-#   4) Strimzi & Kafka bereitstellen (Namespace: kafka)
+#   3) Strimzi & Kafka bereitstellen (Namespace: kafka)
 #      - Namespace kafka anlegen (falls nicht vorhanden)
-#      - Strimzi Operator installieren/aktualisieren
-#      - Kafka Single-Node Cluster deployen: my-cluster (ephemeral example)
-#      - KafkaTopic anlegen: weather-raw (Partitions: 3, Replicas: 1)
 #
-#   5) Datenbanken / Storage
-#      - MariaDB Deployment (default namespace)
-#      - HDFS Deployment (NameNode/DataNode + PVC/Services)
+#     4)  Strimzi Operator installieren/aktualisieren
+#      
+#    5) Kafka Single-Node Cluster deployen: my-cluster (ephemeral example)
 #
-#   6) Initialdaten nach HDFS laden
+#    6) KafkaTopic anlegen: weather-raw (Partitions: 3, Replicas: 1)
+#
+#    7) Datenbanken / Storage
+#      - 7) MariaDB Deployment (default namespace)
+#      - 7b) HDFS Deployment (NameNode/DataNode + PVC/Services)
+#
+#   7b) Initialdaten nach HDFS laden
 #      - Baut Image: hdfs-loader:latest (lokal in Minikube Docker)
-#      - Startet Job: hdfs-initial-load (lädt historische Daten nach HDFS)
+#      - Startet Job: hdfs-initial-load (lädt historische Daten von Github nach HDFS)
 #      - Wartet auf Job completion, gibt bei Fehlern Logs aus
 #
-#   7) Container-Images bauen (für spätere Deployments)
-#      - machine-learning-model:latest
-#      - scraper:latest (Autobahn + Wetter)
-#      - jupyter-consumer:latest
-#      - weather-producer:latest
-#      - heatmap:latest
+#    Container-Images bauen (für spätere Deployments)
+#      - 8) machine-learning-model:latest
+#      - 9) scraper:latest (Autobahn + Wetter)
+#      - 10) jupyter-consumer:latest
+#      - 11) weather-producer:latest
+#      - 15) heatmap:latest
 #
-#   8) MLOps: MLflow PVC + Training Job ausführen
+#   12a) MLOps: MLflow PVC + Training Job ausführen
 #      - Legt MLflow PVC an
 #      - Startet Job: ml-train
-#      - Wartet bis completion; löscht Job anschließend (selfHeal-Schutz deaktiviert)
+#      - 12b)Wartet bis completion; löscht Job anschließend (selfHeal-Schutz deaktiviert)
 #
-#   9) Ingestion / Processing Deployments
-#      - Deploy: jupyter-consumer (+ HPA), wartet und liest RUN_ID aus PVC
-#      - Deploy: weather-producer (Kafka Producer Deployment)
-#      - Deploy: heatmap (Jupyter + Service) inkl. Rollout-Checks/Debug
+#    Ingestion / Processing Deployments
+#      - 13) Deploy: jupyter-consumer (+ HPA), wartet und liest RUN_ID aus PVC
+#      - 14) Deploy: weather-producer (Kafka Producer Deployment)
+#      - 15) Deploy: heatmap (Jupyter + Service) inkl. Rollout-Checks/Debug
 #
-#  10) Periodische Ingestion (CronJobs) + Initial-Kickoff
+#   16) Periodische Ingestion (CronJobs) + Initial-Kickoff
 #      - CronJob: autobahn-scraper (*/30 * * * *)
 #      - CronJob: wetter-scraper   (0 * * * *)
-#      - Erstlauf per create job --from=cronjob/... (Kickoff Jobs)
+#      -17) Erstlauf per create job --from=cronjob/... (Kickoff Jobs)
 #
-#  11) GitOps (optional): ArgoCD installieren und Root-Application anlegen
-#      - Namespace argocd anlegen und ArgoCD installieren (falls nötig)
+#  18) GitOps (optional): ArgoCD installieren und Root-Application anlegen
+#       -19) Namespace argocd anlegen und ArgoCD installieren (falls nötig)
 #      - ArgoCD Application (App-of-Apps Einstieg) anwenden
-#      - Optional: Port-Forward ArgoCD UI (https://localhost:8080)
+#      -20) Optional: Port-Forward ArgoCD UI (https://localhost:8080)
 #
 # Wichtige Annahmen / Hinweise
 #   - Dieses Script baut Docker Images lokal im Minikube-Docker-Daemon;
