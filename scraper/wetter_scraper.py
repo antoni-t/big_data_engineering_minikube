@@ -13,6 +13,40 @@ import requests_cache
 import requests
 from retry_requests import retry
 
+######################################################################
+# Open-Meteo Wetter-Scraper → HDFS (Bronze Layer)
+#
+# Zweck
+#   Dieses Skript ruft stündliche Wetterdaten (z. B. Temperatur, Niederschlag,
+#   Luftfeuchtigkeit, Schneefall) für ein fest definiertes räumliches Raster
+#   in Deutschland über die Open-Meteo-API ab und persistiert die Rohdaten
+#   strukturiert und komprimiert im Bronze-Layer eines Data Lakes.
+#
+# Funktionaler Ablauf
+#   1) Laden eines festen Gitters von Zellzentren (lat/lon, row/col)
+#   2) Bestimmung der letzten vollständig abgeschlossenen Stunde (UTC)
+#   3) Abfrage der stündlichen Wetterparameter je Rasterzelle
+#      unter Berücksichtigung von API-Limits (Retry, Backoff, Throttling)
+#   4) Normalisierung der Antworten in zeilenbasierte Records
+#   5) Persistenz als gzip-komprimierte JSONL-Datei
+#
+# Persistenz & Struktur
+#   - Bevorzugtes Ziel: HDFS über WebHDFS
+#   - Optionales lokales Fallback bei fehlender HDFS-Konfiguration
+#   - Zeitbasierte Ordnerstruktur:
+#       <root>/YYYY/MM/DD/HH/openmeteo_<timestamp>.jsonl.gz
+#
+# Robustheit
+#   - HTTP-Caching und Retry-Mechanismus für stabile API-Nutzung
+#   - Explizite Behandlung von Open-Meteo Rate-Limits
+#   - Schutz vor Überlastung durch MAX_REQUESTS_PER_DAY
+#
+# Einsatzkontext
+#   - Einsatz als Kubernetes CronJob (ein Lauf pro Stunde)
+#   - Datenbasis für nachgelagerte Streaming-, ML- und Forecast-Pipelines
+######################################################################
+
+
 # ============================================
 # Konfiguration
 # ============================================

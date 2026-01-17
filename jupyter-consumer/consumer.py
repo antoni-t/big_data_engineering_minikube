@@ -14,6 +14,56 @@ import mlflow.sklearn
 
 from sqlalchemy import create_engine, text
 
+######################################################################
+# Kafka → ML Inference → MariaDB Upsert (jupyter-consumer)
+#
+# Zweck
+#   Dieser Service konsumiert Wetter-/Forecast-Events aus einem Kafka Topic,
+#   führt darauf ein bereits trainiertes MLflow/Sklearn-Modell zur Vorhersage
+#   von Ereignisanzahlen aus und schreibt die aggregierten/punktuellen
+#   Vorhersagen als Upsert in eine MariaDB-Tabelle (forecast_predictions).
+#
+# Datenfluss (End-to-End)
+#   1) Kafka Ingestion
+#      - KafkaConsumer liest JSON-Nachrichten aus KAFKA_TOPIC_INPUT
+#      - Batching nach Größe (BATCH_SIZE) oder Zeit (FLUSH_SEC)
+#
+#   2) Modell-Laden (MLflow)
+#      - MLflow Tracking URI via MLFLOW_TRACKING_URI (z. B. file:/mlruns)
+#      - RUN_ID wird aus RUN_ID_FILE gelesen (z. B. /mlruns/LATEST_RUN_ID)
+#      - Modell wird über runs:/<RUN_ID>/model geladen (mlflow.sklearn)
+#      - Feature-Reihenfolge bevorzugt aus model.feature_names_in_
+#
+#   3) Payload-Validierung & Normalisierung
+#      - Prüft Pflichtfelder: row, col, slot sowie alle benötigten Features
+#      - Normalisiert/parsed Timestamp-Felder robust nach UTC
+#        (timestamp_hour_local / timestamp / time → tz-aware UTC)
+#      - Mappt slot-String (D1Hxx..D3Hxx) deterministisch auf hour ∈ [1..72]
+#      - Entfernt invalide Datensätze (fehlende timestamp/hour/row/col)
+#
+#   4) Inference
+#      - Baut Feature-Matrix X (float) in konsistenter Spaltenreihenfolge
+#      - model.predict(X) → Vorhersage
+#      - Post-Processing: clip >= 0, runden auf int (predicted_events)
+#
+#   5) Persistenz (MariaDB)
+#      - Legt Zieltabelle forecast_predictions an, falls nicht vorhanden
+#      - Upsert pro (hour, row, col) via ON DUPLICATE KEY UPDATE
+#      - Timestamp wird als naive UTC in MariaDB DATETIME geschrieben
+#
+# Betriebs-/Debug-Verhalten
+#   - Detailliertes Logging pro Flush (Schema, Head-Samples, NaT Counts)
+#   - Consumer läuft dauerhaft; bei Idle wird per sleep weiter am Leben
+#     gehalten (consumer_timeout_ms + outer loop)
+#
+# Konfiguration (Environment)
+#   - KAFKA_BOOTSTRAP_SERVERS, KAFKA_TOPIC_INPUT, KAFKA_GROUP_ID
+#   - MLFLOW_TRACKING_URI, RUN_ID_FILE
+#   - MARIADB_URL
+#   - BATCH_SIZE, FLUSH_SEC
+######################################################################
+
+
 
 def get_env(name: str, default: str | None = None) -> str:
     v = os.getenv(name, default)
@@ -25,17 +75,6 @@ def get_env(name: str, default: str | None = None) -> str:
 def load_run_id(path: str) -> str:
     with open(path, "r", encoding="utf-8") as f:
         return f.read().strip()
-
-
-# --- DB schema we target (must match mariadb init) ---
-# forecast_predictions(
-#   hour INT NOT NULL,
-#   row INT NOT NULL,
-#   col INT NOT NULL,
-#   predicted_events INT NOT NULL,
-#   timestamp DATETIME NOT NULL,
-#   PRIMARY KEY(hour,row,col)
-# )
 
 
 def ensure_table(engine) -> None:
@@ -230,6 +269,7 @@ def main():
     batch: list[dict] = []
     last_flush = time.time()
 
+    # Die Funktion verarbeitet einen Nachrichten-Batch, führt eine ML-Vorhersage durch und speichert die Ergebnisse in der Datenbank.
     def flush(reason: str):
         nonlocal batch, last_flush
         if not batch:

@@ -21,6 +21,38 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import mlflow
 import mlflow.sklearn
 
+######################################################################
+# Training Job: Autobahn-Event-Prognose mit Wetterdaten (MLflow + HDFS)
+#
+# Zweck
+#   Dieses Skript trainiert ein Regressionsmodell zur Vorhersage der Anzahl
+#   von Autobahnereignissen pro Rasterzelle und Stunde, indem historische
+#   Autobahn-Warnmeldungen mit korrespondierenden Wetterdaten kombiniert
+#   und das resultierende Modell samt Metriken in MLflow versioniert wird.
+#
+# Datenquellen
+#   - Autobahn-Daten (*.jsonl.gz) aus HDFS (WebHDFS, hierarchische Struktur)
+#   - Historische Wetterdaten (*.jsonl.gz) aus HDFS
+#   - Statisches Deutschland-Gitter (CSV) zur räumlichen Aggregation
+#
+# Verarbeitungsschritte
+#   1) Laden der Daten aus HDFS per WebHDFS (inkl. Streaming & Safety Limits)
+#   2) Feature Engineering:
+#      - Extraktion und Normalisierung von Autobahnereignissen
+#      - Mapping von Events auf räumliche Rasterzellen und Stunden
+#      - Aggregation (Counts, Labels, Geschwindigkeitsmetriken)
+#   3) Join von Wetter- und Autobahndaten auf Zelle + Stunde
+#   4) Training eines RandomForestRegressor (Sklearn)
+#   5) Evaluation (MAE, RMSE, R²) auf Testdaten
+#
+# MLOps / Output
+#   - Logging von Parametern, Metriken und Feature Importances in MLflow
+#   - Persistenz des trainierten Modells als MLflow-Artefakt
+#   - Schreiben der aktuellen RUN_ID in eine Datei (LATEST_RUN_ID),
+#     die von nachgelagerten Inferenz-Services genutzt wird
+######################################################################
+
+
 # -----------------------------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------------------------
@@ -190,8 +222,10 @@ def load_jsonl_gz_structured_hdfs(root_dir: str, max_files: int = 0, sample_frac
 
 
 # -----------------------------------------------------------------------------
-# Feature engineering (unchanged logic)
+# Feature engineering
 # -----------------------------------------------------------------------------
+
+# Wandelt rohe Autobahnmeldungen in strukturierte, zeit- und ortsbezogene Ereignisdaten mit Stau-Labeln um (per DataFrame).
 def build_events_from_autobahn(autobahn_raw: pd.DataFrame) -> pd.DataFrame:
     df = autobahn_raw.dropna(subset=["payload"]).copy()
     df["warnings"] = df["payload"].apply(lambda x: x.get("warning", []) if isinstance(x, dict) else [])
@@ -228,7 +262,7 @@ def build_events_from_autobahn(autobahn_raw: pd.DataFrame) -> pd.DataFrame:
 
     return events
 
-
+# Ordnet Autobahnereignisse räumlich Rasterzellen zu und aggregiert sie stündlich pro Zelle zu Ereignis- und Staukennzahlen
 def map_events_to_cells(events: pd.DataFrame, grid_points_csv: Path) -> pd.DataFrame:
     pts = pd.read_csv(grid_points_csv)  # id,row,col,lat,lon (corner points)
     pts["lat"] = pts["lat"].astype(float)

@@ -10,6 +10,37 @@ from urllib.parse import urlencode
 
 import requests
 
+######################################################################
+# Autobahn Warning Scraper → HDFS (Bronze Layer)
+#
+# Zweck
+#   Dieses Skript ruft periodisch aktuelle Warnmeldungen der deutschen
+#   Autobahnen über die öffentliche API (verkehr.autobahn.de) ab und
+#   persistiert die vollständigen API-Antworten strukturiert als
+#   gzip-komprimierte JSONL-Dateien im Bronze-Layer eines Data Lakes.
+#
+# Funktionaler Ablauf
+#   1) Discovery aller verfügbaren Autobahn-IDs (Index-Endpunkt)
+#   2) Abruf der Warnmeldungen je Autobahn (services/warning)
+#   3) Anreicherung mit Metadaten (Timestamp, HTTP-Status, Header, Errors)
+#   4) Persistenz der Rohdaten ohne fachliche Interpretation
+#
+# Persistenz & Struktur
+#   - Ziel: HDFS über WebHDFS (bevorzugt) oder lokales Fallback-Verzeichnis
+#   - Pfadstruktur (zeitbasiert):
+#       <root>/YYYY/MM/DD/HH/autobahn_warning_<timestamp>.jsonl.gz
+#   - Format: JSON Lines (eine Antwort pro Zeile), gzip-komprimiert
+#
+# Robustheit
+#   - HTTP-Retries mit Backoff bei temporären Fehlern
+#   - Fehlerfälle (z. B. API nicht erreichbar) werden ebenfalls
+#     als valide Datensätze persistiert (Fehler-Transparenz im Bronze Layer)
+#
+# Einsatzkontext
+#   - Einsatz als Kubernetes CronJob zur periodischen Datensammlung
+######################################################################
+
+
 # --------------------------------------------------------
 # Konfiguration
 # --------------------------------------------------------
@@ -151,7 +182,7 @@ def write_jsonl_gz_local(local_dir: str, filename: str, rows: list[dict]) -> str
     return out_file
 
 # --------------------------------------------------------
-# Hauptlogik — EINZIGER RUN (perfekt für CronJob)
+# Hauptlogik — einmalig Ausführen 
 # --------------------------------------------------------
 def main() -> int:
     dt = utc_now()
@@ -223,7 +254,7 @@ def main() -> int:
 
         results.append(entry)
 
-    # 3) Schreiben als JSONL.GZ
+    # 3) Schreiben als jsonl.gz
     filename = f"autobahn_warning_{ts}.jsonl.gz"
 
     if HDFS_WEBHDFS_URL:

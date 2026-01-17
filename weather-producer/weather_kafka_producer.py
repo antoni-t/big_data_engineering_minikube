@@ -11,11 +11,44 @@ import openmeteo_requests
 import requests_cache
 from retry_requests import retry
 
+######################################################################
+# Weather Forecast Kafka Producer (Open-Meteo → Kafka)
+#
+# Zweck
+#   Dieser Service ruft regelmäßig stündliche 3-Tage-Wetterprognosen für ein
+#   fest definiertes räumliches Raster (Grid-Zellen) über die Open-Meteo-API ab
+#   und publiziert jede Prognosestunde als einzelnes Event in ein Kafka Topic.
+#   Für den Realbetrieb ohne Ratelimit würde die Abfrage in deutlich kürzeren 
+#   Abständen erfolgen.
+#
+# Funktionaler Ablauf
+#   1) Laden eines räumlichen Grids (row/col/lat/lon) aus einer CSV-Datei
+#   2) Periodischer Abruf von stündlichen Wetter-Forecasts (3 Tage Horizont)
+#   3) Umrechnung von UTC-Zeiten in lokale Zeit (Europe/Berlin)
+#   4) Erzeugung stabiler Zeit-Slots (D1Hxx, D2Hxx, D3Hxx)
+#   5) Versand eines Kafka-Events pro Zelle und Stunde
+#
+# Event-Semantik
+#   - Jedes Kafka-Event repräsentiert genau eine Zelle und eine Prognosestunde
+#   - Schlüssel (Key) ist deterministisch aus Slot + Koordinate abgeleitet
+#   - Payload enthält meteorologische Features für nachgelagerte ML-Modelle
+#
+# Betriebsverhalten
+#   - Endlosschleife mit konfigurierbarem Poll-Intervall
+#   - Nutzung von HTTP-Caching und Retry-Mechanismen für stabile API-Zugriffe
+#   - Fehler einzelner Zellen beeinträchtigen nicht den Gesamtdurchlauf
+#
+# Einsatzkontext
+#   - Streaming-Quelle in unserer Big-Data- und ML-Pipeline
+#   - Einsatz als Kubernetes Deployment (long-running Producer)
+######################################################################
+
+
 # -------------------------------------------------------------------
 # 0) Konfiguration über Umgebungsvariablen
 # -------------------------------------------------------------------
-# Diese Werte kannst du im Dockerfile oder im Kubernetes-Deployment setzen.
-# Falls nichts gesetzt ist, greifen die Defaults (gut für lokalen Test).
+# Diese Werte können im Dockerfile oder im Kubernetes-Deployment gesetzt werden.
+# Falls nichts gesetzt ist, greifen die Defaults.
 GRID_PATH = os.getenv("GRID_PATH", "de_grid_cell_centers.csv")
 KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 TOPIC = os.getenv("KAFKA_TOPIC", "weather-raw")
@@ -29,14 +62,14 @@ print(f"Poll Interval:   {POLL_INTERVAL_SECONDS} s")
 print("============================================")
 
 # -------------------------------------------------------------------
-# 1) Setup Open-Meteo API client (laut offizieller Doku)
+# 1) Setup Open-Meteo API client (laut offizieller Doku von Website)
 # -------------------------------------------------------------------
 cache_session = requests_cache.CachedSession(".cache", expire_after=3600)
 retry_session = retry(cache_session, retries=5, backoff_factor=0.2)
 openmeteo = openmeteo_requests.Client(session=retry_session)
 
 # -------------------------------------------------------------------
-# 2) Load grid (Testgrid mit 2 Punkten oder später 400er-Grid)
+# 2) Load grid (Testgrid mit 2 Punkten oder für live-Betrieb 400er-Grid)
 # -------------------------------------------------------------------
 # test_grid.csv:
 # id,row,col,lat,lon
@@ -85,7 +118,7 @@ def compute_slot(ts_local: pd.Timestamp, today_local_date) -> tuple[int, str]:
 
 
 # -------------------------------------------------------------------
-# 4) Request weather forecast for a single cell (offizielle Doku-Logik)
+# 4) Request weather forecast for a single cell
 # -------------------------------------------------------------------
 def fetch_forecast(lat: float, lon: float):
     """
@@ -111,7 +144,7 @@ def fetch_forecast(lat: float, lon: float):
     hourly_showers = hourly.Variables(3).ValuesAsNumpy()
     hourly_snowfall = hourly.Variables(4).ValuesAsNumpy()
 
-    # times als UTC-Timestamps (wie in der offiziellen Doku)
+    # times als UTC-Timestamps 
     times = pd.date_range(
         start=pd.to_datetime(hourly.Time(), unit="s", utc=True),
         end=pd.to_datetime(hourly.TimeEnd(), unit="s", utc=True),

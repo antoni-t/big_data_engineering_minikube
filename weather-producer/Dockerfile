@@ -16,7 +16,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # --- csv file copy ---
 COPY de_grid_cell_centers.csv .
 
-# --- Dein Python-Skript in das Image kopieren ---
+# --- Python-Skript in das Image kopieren ---
 COPY weather_kafka_producer.py .
 
 # --- Command / EntryPoint ---

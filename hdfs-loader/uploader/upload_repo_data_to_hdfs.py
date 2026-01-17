@@ -8,6 +8,45 @@ from typing import Optional
 
 import requests
 
+######################################################################
+# HDFS Initial Loader via WebHDFS (Kubernetes-tauglich)
+#
+# Zweck
+#   Dieses Skript lädt historische, lokal im Repository vorhandene
+#   Daten (Autobahn- und Wetterdaten im Format *.jsonl.gz) rekursiv
+#   in ein Hadoop Distributed File System (HDFS), das über WebHDFS
+#   erreichbar ist und in einem Kubernetes-Cluster betrieben wird.
+#
+# Kernfunktionalität
+#   - Liest Konfiguration ausschließlich über Environment-Variablen
+#     (u. a. WebHDFS-Endpoint, User, Zielpfade im Data Lake)
+#   - Traversiert definierte lokale Verzeichnisse rekursiv
+#   - Spiegelt die Verzeichnisstruktur 1:1 nach HDFS
+#   - Legt benötigte HDFS-Verzeichnisse automatisch an (MKDIRS)
+#   - Lädt Dateien über den zweistufigen WebHDFS-Workflow:
+#       1) CREATE-Aufruf beim NameNode (HTTP 307 Redirect)
+#       2) PUT der Datei zum DataNode
+#
+# Robustheit & Kubernetes-Spezifika
+#   - Eigene HTTP-Request-Logik mit Retries und exponentiellem Backoff
+#   - Behandlung typischer WebHDFS-Probleme in Kubernetes:
+#       * Rewrite von DataNode-Pod-Hostnamen auf ein Service-DNS
+#         (hdfs-datanode.default.svc.cluster.local)
+#   - Konfigurierbare Timeouts für kurze (Metadata) und lange (Upload)
+#     HTTP-Operationen
+#
+# Zielkontext
+#   - Initiale Befüllung des HDFS-basierten Data Lakes (Bronze Layer)
+#   - Einsatz als Kubernetes Job im Rahmen des
+#     Big-Data-/Data-Engineering-Setups
+#
+# Ergebnis
+#   - Autobahn-Daten → HDFS_AUTOBAHN_ROOT
+#   - Wetter-Historie → HDFS_WEATHER_ROOT
+#   - Struktur- und Dateiintegrität bleiben erhalten
+######################################################################
+
+
 # =========================
 # ENV / CONFIG
 # =========================
@@ -39,10 +78,10 @@ def normalize_hdfs_path(p: str) -> str:
     p = (p or "").strip()
     if not p:
         return "/"
-    # remove scheme-like garbage if someone passes full URL by mistake
+    # Prüfung, ob es eine URL ist (hat uns Probleme gemacht...)
     if "://" in p:
         raise ValueError(f"HDFS path must be a path, not a URL: {p}")
-    # collapse multiple slashes
+    # Pfade normalisieren
     while "//" in p:
         p = p.replace("//", "/")
     if not p.startswith("/"):
@@ -56,7 +95,7 @@ def webhdfs_url(path: str, op: str, **params) -> str:
     qp.update(params)
     return f"{HDFS_WEBHDFS_URL}{path}?{urllib.parse.urlencode(qp)}"
 
-
+# HTTP request durchführen mit retries
 def request_with_retries(method: str, url: str, *, allow_redirects: bool, timeout: int, **kwargs) -> requests.Response:
     last_exc: Optional[Exception] = None
     for attempt in range(1, RETRIES + 1):

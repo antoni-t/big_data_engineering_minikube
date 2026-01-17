@@ -3,16 +3,82 @@
 set -euo pipefail
 
 ######################################################################
-# Bootstrap-Script für Big Data Engineering auf Minikube
-# - Stellt sicher, dass Minikube läuft
-# - Schaltet sinnvolle Addons frei (metrics-server, ingress)
-# - Installiert Strimzi + Kafka (my-cluster)
-# - Baut und deployed den Weather Producer (Deployment)
-# - Baut ein Scraper-Image und legt zwei CronJobs an:
-#     * autobahn-scraper (alle 30 Minuten)
-#     * wetter-scraper   (jede Stunde)
-# - Installiert ArgoCD und registriert eine Root-Application
+# Bootstrap-Script: Big Data Engineering – Minikube/Kubernetes Setup
+#
+# Zweck
+#   End-to-End-Bootstrap einer lokalen Big-Data-/MLOps-Demo-Umgebung auf
+#   Minikube inkl. Kafka (Strimzi), HDFS, MariaDB, Ingestion-Jobs, Model
+#   Training (MLflow PVC), Consumer/Producer-Deployments, Heatmap-UI und
+#   optionaler GitOps-Anbindung über ArgoCD.
+#
+# Ablauf (in Ausführungsreihenfolge)
+#   1) Prerequisites prüfen
+#      - Prüft Verfügbarkeit von: minikube, kubectl, helm
+#
+#   2) Minikube starten / verifizieren
+#      - Startet Minikube (Docker Driver, CPU/RAM), falls nicht aktiv
+#      - Setzt Docker-Environment auf Minikube (minikube docker-env)
+#
+#   3) Minikube Addons aktivieren
+#      - metrics-server
+#      - ingress
+#
+#   4) Strimzi & Kafka bereitstellen (Namespace: kafka)
+#      - Namespace kafka anlegen (falls nicht vorhanden)
+#      - Strimzi Operator installieren/aktualisieren
+#      - Kafka Single-Node Cluster deployen: my-cluster (ephemeral example)
+#      - KafkaTopic anlegen: weather-raw (Partitions: 3, Replicas: 1)
+#
+#   5) Datenbanken / Storage
+#      - MariaDB Deployment (default namespace)
+#      - HDFS Deployment (NameNode/DataNode + PVC/Services)
+#
+#   6) Initialdaten nach HDFS laden
+#      - Baut Image: hdfs-loader:latest (lokal in Minikube Docker)
+#      - Startet Job: hdfs-initial-load (lädt historische Daten nach HDFS)
+#      - Wartet auf Job completion, gibt bei Fehlern Logs aus
+#
+#   7) Container-Images lokal bauen (für spätere Deployments)
+#      - machine-learning-model:latest
+#      - scraper:latest (Autobahn + Wetter)
+#      - jupyter-consumer:latest
+#      - weather-producer:latest
+#      - heatmap:latest
+#
+#   8) MLOps: MLflow PVC + Training Job ausführen
+#      - Legt MLflow PVC an
+#      - Startet Job: ml-train
+#      - Wartet bis completion; löscht Job anschließend (selfHeal-Schutz)
+#
+#   9) Serving / Processing Deployments
+#      - Deploy: jupyter-consumer (+ HPA), wartet und liest RUN_ID aus PVC
+#      - Deploy: weather-producer (Kafka Producer Deployment)
+#      - Deploy: heatmap (Jupyter + Service) inkl. Rollout-Checks/Debug
+#
+#  10) Periodische Ingestion (CronJobs) + Initial-Kickoff
+#      - CronJob: autobahn-scraper (*/30 * * * *)
+#      - CronJob: wetter-scraper   (0 * * * *)
+#      - Erstlauf per create job --from=cronjob/... (Kickoff Jobs)
+#
+#  11) GitOps (optional): ArgoCD installieren und Root-Application anlegen
+#      - Namespace argocd anlegen und ArgoCD installieren (falls nötig)
+#      - ArgoCD Application (App-of-Apps Einstieg) anwenden
+#      - Optional: Port-Forward ArgoCD UI (https://localhost:8080)
+#
+# Wichtige Annahmen / Hinweise
+#   - Dieses Script baut Docker Images lokal im Minikube-Docker-Daemon;
+#     daher ist imagePullPolicy für eigene Images typischerweise "Never".
+#   - Strimzi/Kafka wird aus den "latest" URLs installiert (potenziell
+#     variierende Versionen); für reproduzierbare Builds ggf. pinnen.
+#   - ArgoCD kann Ressourcen per automated/selfHeal verwalten; daher wird
+#     der Training-Job nach completion explizit gelöscht.
+#
+# Konfiguration
+#   - GIT_REPO_URL, GIT_BRANCH
+#   - ARGO_APP_NAME, ARGO_APP_NAMESPACE, ARGO_APP_PATH, DEST_*
+#   - Verzeichnisse relativ zu SCRIPT_DIR: producer/scraper/ML/HDFS/loader
 ######################################################################
+
 
 # Konfiguration (bei Bedarf anpassen)
 GIT_REPO_URL="https://github.com/antoni-t/big_data_engineering_minikube.git"
@@ -75,7 +141,7 @@ eval "$(minikube docker-env)"
 echo "Historische Daten werden aus dem GitHub Repo in HDFS geladen."
 
 ######################################################################
-# 2. Sinnvolle Addons aktivieren (metrics-server, ingress)
+# 2. Addons aktivieren (metrics-server, ingress)
 ######################################################################
 echo "Aktiviere Minikube-Addons (metrics-server, ingress)…"
 
@@ -107,7 +173,7 @@ else
 fi
 
 ######################################################################
-# 4. Strimzi-Operator installieren (im Namespace kafka)
+# 4. Strimzi-Operator installieren (innerhalb des Namespace kafka)
 ######################################################################
 echo "Installiere / aktualisiere Strimzi-Operator im Namespace 'kafka'…"
 
@@ -117,7 +183,7 @@ echo "Warte, bis Strimzi-Operator bereit ist…"
 kubectl rollout status deployment/strimzi-cluster-operator -n kafka --timeout=300s
 
 ######################################################################
-# 5. Kafka Single-Node Cluster deployen (my-cluster)
+# 5. Kafka Single-Node Cluster deployen (name: my-cluster)
 ######################################################################
 echo "Erzeuge/aktualisiere Kafka-Cluster 'my-cluster' (Single-Node)…"
 
@@ -129,7 +195,7 @@ kubectl wait kafka/my-cluster --for=condition=Ready --timeout=600s -n kafka || {
 }
 
 ######################################################################
-# 6. Kafka-Topic 'weather-raw' anlegen (für Weather Producer)
+# 6. Kafka-Topic 'weather-raw' anlegen (für Producer)
 ######################################################################
 echo "Erzeuge/aktualisiere KafkaTopic 'weather-raw'…"
 
@@ -158,7 +224,7 @@ kubectl apply -f "${SCRIPT_DIR}/mariadb/k8s/mariadb.yaml"
 kubectl rollout status deploy/mariadb -n default --timeout=300s
 
 ######################################################################
-# 7b. HDFS deployen + Initialdaten aus GitHub nach HDFS laden
+# 7b. HDFS deployen + Initialdaten von GitHub nach HDFS laden
 ######################################################################
 echo "Deploye HDFS (NameNode/DataNode) ..."
 
@@ -196,7 +262,7 @@ kubectl -n default delete job hdfs-initial-load --cascade=foreground --wait=true
 
 
 ######################################################################
-# 8. Docker-Image für Machine Learning Model (Jupyter) bauen
+# 8. Docker-Image für Machine Learning Model (Jupyter NB) bauen
 ######################################################################
 echo "Baue lokales Docker-Image 'machine-learning-model:latest' ..."
 
@@ -218,7 +284,7 @@ echo "Docker-Image 'machine-learning-model:latest' wurde erfolgreich gebaut."
 cd "${SCRIPT_DIR}"
 
 ######################################################################
-# 9. Scraper-Image bauen (autobahn + wetter)
+# 9. Scraper-Image bauen (Autobahn + Wetter)
 ######################################################################
 echo "Baue lokales Docker-Image 'scraper:latest' ..."
 
@@ -297,7 +363,7 @@ cd "${SCRIPT_DIR}"
 
 
 ######################################################################
-# 12 a) MLflow PVC + Training Job ausführen (RUN_ID erzeugen)
+# 12 a) MLflow PVC + Training Job ausführen (RUN_ID für Abruf erzeugen)
 ######################################################################
 echo "Deploye MLflow PVC + starte Training Job..."
 
@@ -317,7 +383,7 @@ kubectl wait --for=condition=complete job/ml-train -n default --timeout=5000s ||
 echo "Training Job completed. Deleting job + pods to free resources..."
 
 ######################################################################
-# 12 b) Kill Training-Jobs
+# 12 b) Kill Training-Jobs (Läuft sonst ewig weiter durch selfheal)
 ######################################################################
 
 kubectl -n default delete job ml-train --cascade=foreground --wait=true
@@ -358,7 +424,7 @@ echo "Deployment 'weather-producer' ist Ready."
 
 
 ######################################################################
-# 15. Heatmap (Jupyter) deployen
+# 15. Heatmap (Jupyter NB) deployen
 ######################################################################
 
 echo "Baue lokales Docker-Image 'heatmap:latest' ..."
@@ -465,7 +531,7 @@ TS="$(date +%Y%m%d%H%M%S)"
 AUTO_JOB="autobahn-scraper-bootstrap-${TS}"
 WETTER_JOB="wetter-scraper-bootstrap-${TS}"
 
-# Jobs nur erstellen, wenn es sie noch nicht gibt (idempotent)
+# Jobs nur erstellen, wenn es sie noch nicht gibt 
 kubectl get job "${AUTO_JOB}" -n default >/dev/null 2>&1 || \
   kubectl create job --from=cronjob/autobahn-scraper "${AUTO_JOB}" -n default
 
@@ -475,7 +541,7 @@ kubectl get job "${WETTER_JOB}" -n default >/dev/null 2>&1 || \
 echo "Kickoff Jobs erstellt: ${AUTO_JOB}, ${WETTER_JOB}"
 
 ######################################################################
-# 18. ArgoCD installieren (falls nicht vorhanden)
+# 18. ArgoCD installieren 
 ######################################################################
 echo "Prüfe ArgoCD-Installation…"
 
@@ -531,7 +597,7 @@ echo "Stelle sicher, dass im Git-Repo unter Pfad '${ARGO_APP_PATH}' passende Arg
 ######################################################################
 echo "Richte optionales Port-Forward für ArgoCD-Weboberfläche ein…"
 
-# Alte port-forwards beenden (Linux/Mac)
+# Alte port-forwards beenden (Unix)
 if command -v pkill >/dev/null 2>&1; then
   pkill -f "kubectl port-forward .*argocd-server" || true
 fi
