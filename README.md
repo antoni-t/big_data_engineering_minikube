@@ -32,3 +32,28 @@ Den Status der Pods überprüfen:
 ```bash
 kubectl get pods
 ```
+
+### Befehle aus dem Screencast
+
+Für ArgoCd (Anweisungen am Ende von Minikube)
+
+ArgoCD-UI: 
+"https://localhost:8080"
+
+Username:
+"admin"
+
+Passwort:
+```bash
+kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d && echo
+```
+
+heatmap service in weiterem Terminal (für das Jupyter Notebook):
+```bash
+minikube service heatmap -n default
+```
+
+hdfs-namenode in zweitem Terminal:
+```bash
+kubectl port-forward svc/hdfs-namenode 9870:9870
+```
